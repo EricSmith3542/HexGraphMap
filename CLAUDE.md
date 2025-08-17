@@ -89,3 +89,87 @@ Defined in `EVertexType` enum:
 - Supports temporary vertex placement with commit/rollback functionality
 - Camera system uses spring arm component for smooth navigation
 - Vertex spacing and mesh dimensions are configurable properties
+
+## Documentation and Knowledge Management
+
+### Obsidian Vault Integration
+
+**All Claude-generated documentation, plans, and analysis should be created in the Obsidian vault located at:**
+`HexGraphGame/Claude-Generated/`
+
+### Vault Structure
+```
+HexGraphGame/Claude-Generated/
+├── Plans/           # Implementation plans, roadmaps, task lists
+├── Analysis/        # Code analysis, architecture reviews
+├── Architecture/    # Architectural decision records, design docs
+└── Documentation/   # API docs, guides, tutorials
+```
+
+### Documentation Standards for Claude Code
+
+When creating documentation in the Obsidian vault:
+
+1. **Use Obsidian Linking**: Always link related concepts using `[[Concept Name]]` syntax
+2. **Tag Content**: Use tags like `#architecture`, `#refactoring`, `#analysis`, `#claude-generated`
+3. **Cross-Reference**: Link to related files, classes, and concepts throughout documents
+4. **Metadata Headers**: Include project info, creation date, status, and document type
+5. **Structured Formatting**: Use consistent heading hierarchy and formatting
+
+### Key Concepts to Link
+- `[[HexGraphMap]]` - Main project
+- `[[HexGraph]]` - Core controller class
+- `[[Vertex]]` - Vertex system and hierarchy
+- `[[Adjacency Map]]` - Adjacency management system
+- `[[Enhanced Input]]` - Input system
+- `[[Camera Controls]]` - Camera management
+- `[[Coordinate System]]` - Hexagonal grid coordinates
+- `[[Line Drawing]]` - Drawing and preview systems
+- `[[Memory Management]]` - Object lifecycle and GC
+- `[[Performance]]` - Performance considerations
+- `[[Architecture]]` - System architecture concepts
+
+### Document Templates
+
+**Analysis Documents:**
+```markdown
+# Title
+> **Project:** [[HexGraphMap]]
+> **Type:** #analysis #architecture
+> **Status:** #active
+> **Created:** YYYY-MM-DD
+> **Analyzed By:** Claude Code
+
+[Content with extensive linking to related concepts]
+
+**Tags:** #relevant #tags #claude-generated
+```
+
+**Implementation Plans:**
+```markdown
+# Title
+> **Project:** [[HexGraphMap]]
+> **Type:** #implementation-plan
+> **Status:** #active
+> **Total Tasks:** N
+> **Dependencies:** [[Related Documents]]
+
+[Detailed task breakdown with links to architectural concepts]
+
+**Tags:** #implementation #planning #claude-generated
+```
+
+### Best Practices
+
+1. **Always check if an Obsidian vault exists** before creating documentation
+2. **Use the vault structure** to organize different types of documents
+3. **Link extensively** to create a knowledge graph of project concepts
+4. **Update existing documents** when new information becomes available
+5. **Reference the vault location** in code comments when relevant
+
+### Integration with Development
+
+- Reference Obsidian documentation in code comments when appropriate
+- Link to specific analysis or architectural documents in pull requests
+- Use the vault as the primary location for all Claude-generated project knowledge
+- Keep documentation synchronized with code changes

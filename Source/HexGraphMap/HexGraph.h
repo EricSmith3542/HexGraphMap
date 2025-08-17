@@ -11,6 +11,7 @@
 #include "GraphVertex.h"
 #include "PlaceHolderVertex.h"
 #include "AdjacencyMap.h"
+#include "HexGraphSettings.h"
 #include "Containers/Map.h"
 #include "Templates/SharedPointer.h"
 #include "Math/UnrealMathUtility.h"
@@ -57,6 +58,10 @@ public:
 
 	UPROPERTY(BlueprintReadOnly)
 	TMap<FString, UAdjacencyMap*> selectedPieceAdjacencyMatrix;
+
+	// Managed adjacency map tracking for proper cleanup
+	UPROPERTY()
+	TArray<TObjectPtr<UAdjacencyMap>> ManagedAdjacencyMaps;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hex Graph")
 	float VertexSpacing;
@@ -117,6 +122,24 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "HexGraph")
 	UAdjacencyMap* GetAdjacenciesForVertex(AVertex* vertex);
+
+	// Managed adjacency map system
+	UFUNCTION(BlueprintCallable, Category = "HexGraph")
+	UAdjacencyMap* CreateManagedAdjacencyMap();
+
+	UFUNCTION(BlueprintCallable, Category = "HexGraph")
+	void CleanupManagedAdjacencyMaps();
+
+	// Vertex reference management
+	UFUNCTION(BlueprintCallable, Category = "HexGraph")
+	void ValidateAllVertexReferences();
+
+	UFUNCTION(BlueprintCallable, Category = "HexGraph")
+	int32 CleanupInvalidVertexReferences();
+
+	// Settings helpers
+	UFUNCTION(BlueprintCallable, Category = "HexGraph")
+	void RefreshSettingsValues();
 	
 	UFUNCTION(BLueprintCallable, Category = "HexGraph")
 	void InitializeVertex(AVertex* vertex, int row, int col, bool isTemp = false, UAdjacencyMap* adjacencyMap = nullptr);
