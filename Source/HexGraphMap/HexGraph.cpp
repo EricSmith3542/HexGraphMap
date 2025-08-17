@@ -2,6 +2,9 @@
 
 
 #include "HexGraph.h"
+#include "HexGraphMap.h"
+#include "HexGraphValidation.h"
+#include "HexGraphSettings.h"
 #include "EnhancedInputComponent.h"
 #include <EnhancedInputSubsystems.h>
 
@@ -20,8 +23,15 @@ AHexGraph::AHexGraph()
 	tempAdjacencyMatrix = TMap<FString, UAdjacencyMap*>();
 	previewVertices = TArray<AVertex*>();
 
-	MeshLength = -1;
-	VertexSpacing = 0.5f;
+	// Initialize configuration from settings
+	const UHexGraphSettings* Settings = UHexGraphSettings::GetHexGraphSettings();
+	
+	MeshLength = Settings->DefaultMeshLength;
+	VertexSpacing = Settings->DefaultVertexSpacing;
+	PanSpeed = Settings->DefaultPanSpeed;
+	ZoomPercent = Settings->DefaultZoomPercent;
+	maxFillDepth = Settings->MaxFillDepth;
+	
 	lineDrawActivated = false;
 	pieceSelected = false;
 
@@ -37,8 +47,6 @@ AHexGraph::AHexGraph()
 	SpringArmComp->TargetArmLength = 400.f;
 	SpringArmComp->bEnableCameraLag = true;
 	SpringArmComp->CameraLagSpeed = 3.0f;
-
-	maxFillDepth = 5;
 }
 
 AGraphVertex* AHexGraph::AddFirstVertex()
@@ -137,8 +145,17 @@ void AHexGraph::BeginPlay()
 	}
 }
 
-void AHexGraph::EndPlay(const EEndPlayReason::Type)
+void AHexGraph::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	Super::EndPlay(EndPlayReason);
+	
+	// Clean up invalid vertex references
+	int32 CleanedVertices = CleanupInvalidVertexReferences();
+	
+	// Clean up managed adjacency maps to prevent memory leaks
+	CleanupManagedAdjacencyMaps();
+	
+	UE_LOG(LogHexGraph, Log, TEXT("EndPlay: HexGraph cleanup completed (cleaned %d invalid vertex references)"), CleanedVertices);
 }
 
 FActorSpawnParameters AHexGraph::BuildVertexSpawnParams()
@@ -152,7 +169,27 @@ FActorSpawnParameters AHexGraph::BuildVertexSpawnParams()
 
 AVertex* AHexGraph::GetVertex(FString coord)
 {
-	return vertices.Contains(coord) ? *vertices.Find(coord):nullptr;
+	// Validate coordinate string format
+	HEXGRAPH_VALIDATE_COORD_STRING(coord, nullptr);
+	
+	// Check if vertex exists in the map
+	if (!vertices.Contains(coord))
+	{
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("GetVertex: No vertex found at coordinate '%s'"), *coord);
+		return nullptr;
+	}
+	
+	// Get vertex pointer and validate it
+	AVertex** VertexPtr = vertices.Find(coord);
+	if (!VertexPtr || !IsValid(*VertexPtr))
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("GetVertex: Invalid vertex pointer at coordinate '%s'"), *coord);
+		// Clean up invalid entry
+		vertices.Remove(coord);
+		return nullptr;
+	}
+	
+	return *VertexPtr;
 }
 
 void AHexGraph::RemoveVertexAtCoord(FString coord)
@@ -255,7 +292,203 @@ void AHexGraph::RemoveVertexAtCoord(FString coord)
 
 UAdjacencyMap* AHexGraph::GetAdjacenciesForVertex(AVertex* vertex)
 {
-	return *adjacencyMatrix.Find(vertex->Coord());
+	// Validate vertex pointer
+	HEXGRAPH_VALIDATE_VERTEX(vertex, nullptr);
+	
+	// Get coordinate and validate it
+	FString coord = vertex->Coord();
+	HEXGRAPH_VALIDATE_COORD_STRING(coord, nullptr);
+	
+	// Check if adjacency map exists
+	if (!adjacencyMatrix.Contains(coord))
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("GetAdjacenciesForVertex: No adjacency map found for vertex at '%s'"), *coord);
+		return nullptr;
+	}
+	
+	// Get adjacency map and validate it
+	UAdjacencyMap** AdjMapPtr = adjacencyMatrix.Find(coord);
+	if (!AdjMapPtr || !IsValid(*AdjMapPtr))
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("GetAdjacenciesForVertex: Invalid adjacency map at '%s'"), *coord);
+		// Clean up invalid entry
+		adjacencyMatrix.Remove(coord);
+		return nullptr;
+	}
+	
+	return *AdjMapPtr;
+}
+
+UAdjacencyMap* AHexGraph::CreateManagedAdjacencyMap()
+{
+	// Create new adjacency map with this HexGraph as owner
+	UAdjacencyMap* NewAdjMap = NewObject<UAdjacencyMap>(this);
+	
+	if (!IsValid(NewAdjMap))
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("CreateManagedAdjacencyMap: Failed to create adjacency map"));
+		return nullptr;
+	}
+	
+	// Add to managed tracking array for automatic cleanup
+	ManagedAdjacencyMaps.Add(NewAdjMap);
+	
+	UE_LOG(LogHexGraph, VeryVerbose, TEXT("CreateManagedAdjacencyMap: Created and tracked adjacency map (Total managed: %d)"), 
+		   ManagedAdjacencyMaps.Num());
+	
+	return NewAdjMap;
+}
+
+void AHexGraph::CleanupManagedAdjacencyMaps()
+{
+	UE_LOG(LogHexGraph, Log, TEXT("CleanupManagedAdjacencyMaps: Cleaning up %d managed adjacency maps"), 
+		   ManagedAdjacencyMaps.Num());
+	
+	// Remove any invalid objects from the managed array
+	int32 InitialCount = ManagedAdjacencyMaps.Num();
+	ManagedAdjacencyMaps.RemoveAll([](const TObjectPtr<UAdjacencyMap>& AdjMap) {
+		return !IsValid(AdjMap.Get());
+	});
+	
+	int32 RemovedCount = InitialCount - ManagedAdjacencyMaps.Num();
+	if (RemovedCount > 0)
+	{
+		UE_LOG(LogHexGraph, Log, TEXT("CleanupManagedAdjacencyMaps: Removed %d invalid adjacency maps"), RemovedCount);
+	}
+	
+	// Clear all remaining references (they will be garbage collected)
+	ManagedAdjacencyMaps.Empty();
+	
+	UE_LOG(LogHexGraph, Log, TEXT("CleanupManagedAdjacencyMaps: Cleanup complete"));
+}
+
+void AHexGraph::ValidateAllVertexReferences()
+{
+	UE_LOG(LogHexGraph, Log, TEXT("ValidateAllVertexReferences: Starting validation of all vertex references"));
+	
+	int32 InvalidReferences = 0;
+	int32 TotalReferences = 0;
+	
+	// Check main vertices map
+	for (auto& VertexPair : vertices)
+	{
+		TotalReferences++;
+		if (!IsValid(VertexPair.Value))
+		{
+			InvalidReferences++;
+			UE_LOG(LogHexGraph, Warning, TEXT("ValidateAllVertexReferences: Invalid vertex at '%s'"), *VertexPair.Key);
+		}
+	}
+	
+	// Check temp vertices map
+	for (auto& VertexPair : tempVertices)
+	{
+		TotalReferences++;
+		if (!IsValid(VertexPair.Value))
+		{
+			InvalidReferences++;
+			UE_LOG(LogHexGraph, Warning, TEXT("ValidateAllVertexReferences: Invalid temp vertex at '%s'"), *VertexPair.Key);
+		}
+	}
+	
+	// Check special references
+	if (hoverTarget && !IsValid(hoverTarget))
+	{
+		InvalidReferences++;
+		UE_LOG(LogHexGraph, Warning, TEXT("ValidateAllVertexReferences: Invalid hoverTarget reference"));
+	}
+	
+	if (previousVertexSelection && !IsValid(previousVertexSelection))
+	{
+		InvalidReferences++;
+		UE_LOG(LogHexGraph, Warning, TEXT("ValidateAllVertexReferences: Invalid previousVertexSelection reference"));
+	}
+	
+	UE_LOG(LogHexGraph, Log, TEXT("ValidateAllVertexReferences: Found %d invalid references out of %d total"), 
+		   InvalidReferences, TotalReferences);
+}
+
+int32 AHexGraph::CleanupInvalidVertexReferences()
+{
+	UE_LOG(LogHexGraph, Log, TEXT("CleanupInvalidVertexReferences: Starting cleanup of invalid vertex references"));
+	
+	int32 CleanedReferences = 0;
+	
+	// Clean up main vertices map
+	TArray<FString> InvalidKeys;
+	for (auto& VertexPair : vertices)
+	{
+		if (!IsValid(VertexPair.Value))
+		{
+			InvalidKeys.Add(VertexPair.Key);
+		}
+	}
+	
+	for (const FString& Key : InvalidKeys)
+	{
+		vertices.Remove(Key);
+		adjacencyMatrix.Remove(Key); // Also remove corresponding adjacency map
+		CleanedReferences++;
+		UE_LOG(LogHexGraph, Log, TEXT("CleanupInvalidVertexReferences: Removed invalid vertex at '%s'"), *Key);
+	}
+	
+	// Clean up temp vertices map
+	InvalidKeys.Empty();
+	for (auto& VertexPair : tempVertices)
+	{
+		if (!IsValid(VertexPair.Value))
+		{
+			InvalidKeys.Add(VertexPair.Key);
+		}
+	}
+	
+	for (const FString& Key : InvalidKeys)
+	{
+		tempVertices.Remove(Key);
+		tempAdjacencyMatrix.Remove(Key); // Also remove corresponding adjacency map
+		CleanedReferences++;
+		UE_LOG(LogHexGraph, Log, TEXT("CleanupInvalidVertexReferences: Removed invalid temp vertex at '%s'"), *Key);
+	}
+	
+	// Clean up special references
+	if (hoverTarget && !IsValid(hoverTarget))
+	{
+		hoverTarget = nullptr;
+		CleanedReferences++;
+		UE_LOG(LogHexGraph, Log, TEXT("CleanupInvalidVertexReferences: Cleared invalid hoverTarget"));
+	}
+	
+	if (previousVertexSelection && !IsValid(previousVertexSelection))
+	{
+		previousVertexSelection = nullptr;
+		CleanedReferences++;
+		UE_LOG(LogHexGraph, Log, TEXT("CleanupInvalidVertexReferences: Cleared invalid previousVertexSelection"));
+	}
+	
+	UE_LOG(LogHexGraph, Log, TEXT("CleanupInvalidVertexReferences: Cleaned up %d invalid references"), CleanedReferences);
+	return CleanedReferences;
+}
+
+void AHexGraph::RefreshSettingsValues()
+{
+	const UHexGraphSettings* Settings = UHexGraphSettings::GetHexGraphSettings();
+	if (!Settings)
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("RefreshSettingsValues: Could not get HexGraphSettings, using defaults"));
+		return;
+	}
+
+	// Update runtime values from settings
+	VertexSpacing = Settings->DefaultVertexSpacing;
+	PanSpeed = Settings->DefaultPanSpeed;
+	ZoomPercent = Settings->DefaultZoomPercent;
+	maxFillDepth = Settings->MaxFillDepth;
+	useMouseFollower = Settings->bUseMouseFollower;
+	
+	// Note: MeshLength is calculated dynamically and shouldn't be overridden
+	
+	UE_LOG(LogHexGraph, Log, TEXT("RefreshSettingsValues: Updated settings - VertexSpacing: %f, PanSpeed: %f, ZoomPercent: %f, MaxFillDepth: %d"), 
+		   VertexSpacing, PanSpeed, ZoomPercent, maxFillDepth);
 }
 
 //Adds a vertex to the map and sets its adjacencies to the given list; adds adjacencies for all neighbors if forceBiDirectionalAdjacency is set to true
@@ -269,7 +502,7 @@ AVertex* AHexGraph::AddVertexWithAdjacencies(TSubclassOf<AVertex> vertexClass, i
 
 void AHexGraph::HandleVertexRightClick(AVertex* clickedVertex)
 {
-	UE_LOG(LogTemp, Log, TEXT("Adjacencies for clicked Vertex:\n %s"), *(*adjacencyMatrix.Find(clickedVertex->Coord()))->adjacencyString());
+	UE_LOG(LogHexGraph, Log, TEXT("Adjacencies for clicked Vertex:\n %s"), *(*adjacencyMatrix.Find(clickedVertex->Coord()))->adjacencyString());
 }
 
 AVertex* AHexGraph::PromotePlaceholderToInstance(APlaceHolderVertex* placeHolderVertex)
@@ -430,7 +663,13 @@ void AHexGraph::SelectGraphPiece(TMap<FString, TSubclassOf<AVertex>> pieceVertic
 
 	for (const TPair<FString, FString>& coordAdjacencyPair : stringifiedAdjacencyMap) 
 	{
-		UAdjacencyMap* currentMap = NewObject<UAdjacencyMap>(this);
+		UAdjacencyMap* currentMap = CreateManagedAdjacencyMap();
+		if (!currentMap)
+		{
+			UE_LOG(LogHexGraph, Error, TEXT("SelectGraphPiece: Failed to create managed adjacency map for piece '%s'"), *pieceName);
+			continue;
+		}
+		
 		TArray<FString> currentAdj;
 		coordAdjacencyPair.Value.ParseIntoArray(currentAdj, TEXT(";"), false);
 		currentMap->setAllAdjacencies(currentAdj);
@@ -441,19 +680,48 @@ void AHexGraph::SelectGraphPiece(TMap<FString, TSubclassOf<AVertex>> pieceVertic
 
 void AHexGraph::InitializeVertex(AVertex* vertex, int row, int col, bool isTemp, UAdjacencyMap* adjacencyMap)
 {
+	// Validate vertex pointer
+	HEXGRAPH_VALIDATE_VERTEX(vertex, );
+	
+	// Validate coordinates
+	if (!UHexGraphValidation::IsValidCoordinate(row, col))
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("InitializeVertex: Invalid coordinates (%d, %d)"), row, col);
+		return;
+	}
+	
+	// Set vertex coordinates
 	vertex->row = row;
 	vertex->col = col;
+	
+	// Get coordinate string for map operations
+	FString coord = vertex->Coord();
+	
+	// Validate or create adjacency map using managed system
+	UAdjacencyMap* adjMap = adjacencyMap;
+	if (!adjMap)
+	{
+		adjMap = CreateManagedAdjacencyMap();
+		if (!adjMap)
+		{
+			UE_LOG(LogHexGraph, Error, TEXT("InitializeVertex: Failed to create managed adjacency map for vertex at '%s'"), *coord);
+			return;
+		}
+	}
 
+	// Add to appropriate storage maps
 	if (isTemp) {
-		tempVertices.Add(vertex->Coord(), vertex);
-		tempAdjacencyMatrix.Add(vertex->Coord(), (adjacencyMap == nullptr ? NewObject<UAdjacencyMap>(this) : adjacencyMap));
+		tempVertices.Add(coord, vertex);
+		tempAdjacencyMatrix.Add(coord, adjMap);
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("InitializeVertex: Added temporary vertex at '%s'"), *coord);
 	}
 	else {
-		vertices.Add(vertex->Coord(), vertex);
-		adjacencyMatrix.Add(vertex->Coord(), (adjacencyMap == nullptr ? NewObject<UAdjacencyMap>(this) : adjacencyMap));
+		vertices.Add(coord, vertex);
+		adjacencyMatrix.Add(coord, adjMap);
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("InitializeVertex: Added permanent vertex at '%s'"), *coord);
 	}
 
-	//vertex->OnClicked.AddDynamic(this, &AHexGraph::OnVertexClicked);
+	// Set up event handlers
 	vertex->OnBeginCursorOver.AddDynamic(this, &AHexGraph::OnVertexHoverBegin);
 	vertex->OnEndCursorOver.AddDynamic(this, &AHexGraph::OnVertexHoverEnd);
 }
@@ -484,7 +752,7 @@ APlaceHolderVertex* AHexGraph::DemoteInstanceToPlaceHolder(AGraphVertex* graphVe
 
 void AHexGraph::OnDelete() 
 {
-	UE_LOG(LogTemp, Log, TEXT("\n\nOnDelete START\n\n"));
+	UE_LOG(LogHexGraph, Log, TEXT("\n\nOnDelete START\n\n"));
 	if (!deleting && hoverTarget && hoverTarget->type == EVertexType::Graph) {
 		deleting = true;
 		RemoveVertexAtCoord(hoverTarget->Coord());
@@ -495,13 +763,13 @@ void AHexGraph::OnDelete()
 
 void AHexGraph::OnStartLineDraw()
 {
-	UE_LOG(LogTemp, Log, TEXT("\n\nLINE DRAW START\n\n"));
+	UE_LOG(LogHexGraph, Log, TEXT("\n\nLINE DRAW START\n\n"));
 	lineDrawActivated = true;
 }
 
 void AHexGraph::OnStopLineDraw()
 {
-	UE_LOG(LogTemp, Log, TEXT("\n\nLINE DRAW END\n\n"));
+	UE_LOG(LogHexGraph, Log, TEXT("\n\nLINE DRAW END\n\n"));
 	lineDrawActivated = false;
 
 	ClearLineDraw();
@@ -529,7 +797,7 @@ void AHexGraph::OnFill()
 	}
 	FString mouseCoord = GetCoordFromMousePosition();
 
-	UE_LOG(LogTemp, Log, TEXT("Coord: %s"), *mouseCoord);
+	UE_LOG(LogHexGraph, Log, TEXT("Coord: %s"), *mouseCoord);
 }
 
 void AHexGraph::FillConnections(AVertex* vert, int depth)
@@ -639,7 +907,7 @@ void AHexGraph::OnMoveRight(const FInputActionValue& value)
 
 void AHexGraph::DrawTempPiece()
 {
-	UE_LOG(LogTemp, Log, TEXT("MAKE THIS ACTUALLY DRAW"));
+	UE_LOG(LogHexGraph, Log, TEXT("MAKE THIS ACTUALLY DRAW"));
 }
 
 void AHexGraph::PreviewLineDraw() 
@@ -648,7 +916,7 @@ void AHexGraph::PreviewLineDraw()
 		//Get mouse position projected onto this graphs XY plane
 		FVector mousePositionOnGraph = ProjectMousePositionToActorXY(this);
 
-		UE_LOG(LogTemp, Log, TEXT("Mouse Project: %f  -  %f"), mousePositionOnGraph.X, mousePositionOnGraph.Y);
+		UE_LOG(LogHexGraph, Log, TEXT("Mouse Project: %f  -  %f"), mousePositionOnGraph.X, mousePositionOnGraph.Y);
 
 		//Determine position of most recent preview or last selected vertex
 		AVertex* selectedActor;
@@ -659,17 +927,17 @@ void AHexGraph::PreviewLineDraw()
 			selectedActor = previousVertexSelection;
 		}
 
-		UE_LOG(LogTemp, Log, TEXT("Selected Actor -> %s"), *selectedActor->GetActorLabel());
+		UE_LOG(LogHexGraph, Log, TEXT("Selected Actor -> %s"), *selectedActor->GetName());
 
 		FVector selectPosition = selectedActor->GetActorLocation();
 
-		UE_LOG(LogTemp, Log, TEXT("Select: %f  -  %f"), selectPosition.X, selectPosition.Y);
+		UE_LOG(LogHexGraph, Log, TEXT("Select: %f  -  %f"), selectPosition.X, selectPosition.Y);
 		
 		//Get the closest hex direction toward the mouse from the selectPosition
 		EHexagonDirection hexDirectionToCursor = DetermineHexagonSide(mousePositionOnGraph - selectPosition);
 		FString directionName;
 		UEnum::GetValueAsString(hexDirectionToCursor, directionName);
-		UE_LOG(LogTemp, Log, TEXT("Direction: %s"), *directionName);
+		UE_LOG(LogHexGraph, Log, TEXT("Direction: %s"), *directionName);
 
 		FString previewCoord = GetCoordInDirection(selectedActor, hexDirectionToCursor);
 
@@ -695,7 +963,7 @@ EHexagonDirection AHexGraph::DetermineHexagonSide(const FVector& directionVector
 	int Sector = FMath::RoundToInt(Angle / 60.f) % 6;
 	
 
-	UE_LOG(LogTemp, Log, TEXT("\n\nANGLE: %f\nSector: %d\n\n"), Angle, Sector);
+	UE_LOG(LogHexGraph, Log, TEXT("\n\nANGLE: %f\nSector: %d\n\n"), Angle, Sector);
 
 
 	return static_cast<EHexagonDirection>(Sector);
@@ -729,7 +997,7 @@ void AHexGraph::CommitTempToGraph()
 FVector AHexGraph::ProjectMousePositionToActorXY(AActor* actor)
 {
 	if (!actor) {
-		UE_LOG(LogTemp, Error, TEXT("Target actor is null"));
+		UE_LOG(LogHexGraph, Error, TEXT("Target actor is null"));
 		return FVector::ZeroVector;
 	}
 
@@ -768,7 +1036,7 @@ void AHexGraph::OnVertexClicked(AActor* clickedActor, FKey clickedButton)
 	AVertex* clickedVertex = Cast<AVertex>(clickedActor);
 	FName buttonName = clickedButton.GetFName();
 
-	UE_LOG(LogTemp, Log, TEXT("Vertex %s was clicked: %s"), *clickedVertex->Coord(), *buttonName.ToString());
+	UE_LOG(LogHexGraph, Log, TEXT("Vertex %s was clicked: %s"), *clickedVertex->Coord(), *buttonName.ToString());
 
 	if (buttonName == TEXT("LeftMouseButton")) {
 		HandleVertexLeftClick(clickedVertex);
@@ -797,7 +1065,7 @@ void AHexGraph::OnVertexHoverEnd(AActor* hoveredVertex)
 
 void AHexGraph::HandleVertexLeftClick(AVertex* clickedVertex)
 {
-	UE_LOG(LogTemp, Log, TEXT("Adjacencies for clicked Vertex:\n %s"), *(*adjacencyMatrix.Find(clickedVertex->Coord()))->adjacencyString());
+	UE_LOG(LogHexGraph, Log, TEXT("Adjacencies for clicked Vertex:\n %s"), *(*adjacencyMatrix.Find(clickedVertex->Coord()))->adjacencyString());
 
 	APlaceHolderVertex* placeHolderVertex = Cast<APlaceHolderVertex>(clickedVertex);
 
@@ -805,7 +1073,7 @@ void AHexGraph::HandleVertexLeftClick(AVertex* clickedVertex)
 		PromotePlaceholderToInstance(placeHolderVertex);
 	}
 	else {
-		UE_LOG(LogTemp, Log, TEXT("Instance Vertex Left Clicked"))
+		UE_LOG(LogHexGraph, Log, TEXT("Instance Vertex Left Clicked"))
 	}
 
 }
@@ -817,10 +1085,36 @@ FString AHexGraph::intsToCoordString(int row, int col)
 
 void AHexGraph::coordStringToInts(const FString coord, int& row, int& col)
 {
+	// Initialize output values to invalid state
+	row = 0;
+	col = 0;
+	
+	// Validate coordinate string format
+	if (!UHexGraphValidation::IsValidCoordinateString(coord))
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("coordStringToInts: Invalid coordinate string format '%s'"), *coord);
+		return;
+	}
+	
+	// Parse the coordinate string
 	TArray<FString> coordParts;
 	coord.ParseIntoArray(coordParts, TEXT(":"), true);
+	
+	// Validate we have exactly 2 parts
+	HEXGRAPH_VALIDATE_ARRAY_INDEX(coordParts, 0, );
+	HEXGRAPH_VALIDATE_ARRAY_INDEX(coordParts, 1, );
+	
+	// Convert strings to integers
 	row = FCString::Atoi(*coordParts[0]);
 	col = FCString::Atoi(*coordParts[1]);
+	
+	// Validate the resulting coordinates
+	if (!UHexGraphValidation::IsValidCoordinate(row, col))
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("coordStringToInts: Parsed coordinates (%d, %d) are out of valid range"), row, col);
+		row = 0;
+		col = 0;
+	}
 }
 
 // Called every frame
