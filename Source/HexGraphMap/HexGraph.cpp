@@ -31,6 +31,7 @@ AHexGraph::AHexGraph()
 	PanSpeed = Settings->DefaultPanSpeed;
 	ZoomPercent = Settings->DefaultZoomPercent;
 	maxFillDepth = Settings->MaxFillDepth;
+	useMouseFollower = Settings->bUseMouseFollower;
 	
 	lineDrawActivated = false;
 	pieceSelected = false;
@@ -47,44 +48,117 @@ AHexGraph::AHexGraph()
 	SpringArmComp->TargetArmLength = 400.f;
 	SpringArmComp->bEnableCameraLag = true;
 	SpringArmComp->CameraLagSpeed = 3.0f;
+
+	// Initialize Manager System
+	InitializeManagers();
 }
 
 AGraphVertex* AHexGraph::AddFirstVertex()
 {
-
-	//Spawn the first vertex actor for the graph
-	AGraphVertex* firstVertex = Cast<AGraphVertex>(AddVertexWithAdjacencies(defaultVertexClass, 0, 0, FTransform(), { "1:0", "1:1", "0:1", "-1:0", "0:-1", "1:-1" }, false));
-
-	//TODO: Add verification that the X and Y directions of all possibleVertices are consistent
-
-
-	//Set the MeshLength of the vertices
-	FTransform vertexTransform = firstVertex->GetTransform();
-	FBoxSphereBounds vertexBounds = firstVertex->MeshComponent->CalcBounds(vertexTransform);
-	MeshLength = vertexBounds.BoxExtent.X * 2.0f;
-
-	//Build PlaceHolderVertices for all 6 directions
-	EHexagonDirection firstNeighborDirection = EHexagonDirection::Southeast;
-	EHexagonDirection secondNeighborDirection = EHexagonDirection::South;
-	EHexagonDirection thirdNeighborDirection = EHexagonDirection::Southwest;
-	for (int i = 0; i < 6; i++)
+	// Use VertexManager if available, otherwise fall back to legacy method
+	if (VertexManager)
 	{
-		AVertex* newPlaceHolderVert = AddVertexInDirection(placeHolderVertexClass, firstVertex, static_cast<EHexagonDirection>(i));
+		// Create the first vertex using VertexManager
+		FHexCoordinate StartCoord(0, 0);
+		TArray<FString> Adjacencies = { "1:0", "1:1", "0:1", "-1:0", "0:-1", "1:-1" };
 		
-		TArray<FString> placeHolderAdjacencies = { "", "", "", "", "", "" };
+		AVertex* firstVertex = VertexManager->CreateVertexWithAdjacencies(
+			defaultVertexClass, 
+			StartCoord, 
+			FTransform(), 
+			Adjacencies, 
+			false
+		);
 
-		placeHolderAdjacencies[static_cast<int32>(firstNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, firstNeighborDirection);
-		placeHolderAdjacencies[static_cast<int32>(secondNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, secondNeighborDirection);
-		placeHolderAdjacencies[static_cast<int32>(thirdNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, thirdNeighborDirection);
+		AGraphVertex* graphVertex = Cast<AGraphVertex>(firstVertex);
+		if (!graphVertex)
+		{
+			UE_LOG(LogHexGraph, Error, TEXT("AddFirstVertex: Failed to create graph vertex with VertexManager"));
+			return nullptr;
+		}
 
-		GetAdjacenciesForVertex(newPlaceHolderVert)->setAllAdjacencies(placeHolderAdjacencies);
+		//Set the MeshLength of the vertices
+		FTransform vertexTransform = graphVertex->GetTransform();
+		FBoxSphereBounds vertexBounds = graphVertex->MeshComponent->CalcBounds(vertexTransform);
+		MeshLength = vertexBounds.BoxExtent.X * 2.0f;
 
-		firstNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(firstNeighborDirection) + 1) % 6);
-		secondNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(secondNeighborDirection) + 1) % 6);
-		thirdNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(thirdNeighborDirection) + 1) % 6);
+		//Build PlaceHolderVertices for all 6 directions using VertexManager
+		EHexagonDirection firstNeighborDirection = EHexagonDirection::Southeast;
+		EHexagonDirection secondNeighborDirection = EHexagonDirection::South;
+		EHexagonDirection thirdNeighborDirection = EHexagonDirection::Southwest;
+		for (int i = 0; i < 6; i++)
+		{
+			EHexagonDirection Direction = static_cast<EHexagonDirection>(i);
+			AVertex* newPlaceHolderVert = VertexManager->CreateVertexInDirection(
+				placeHolderVertexClass, 
+				graphVertex, 
+				Direction, 
+				false
+			);
+			
+			if (newPlaceHolderVert)
+			{
+				// Set up adjacencies for the placeholder (match legacy method)
+				TArray<FString> placeHolderAdjacencies = { "", "", "", "", "", "" };
+
+				placeHolderAdjacencies[static_cast<int32>(firstNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, firstNeighborDirection);
+				placeHolderAdjacencies[static_cast<int32>(secondNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, secondNeighborDirection);
+				placeHolderAdjacencies[static_cast<int32>(thirdNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, thirdNeighborDirection);
+
+				UAdjacencyMap* NewPlaceHolderVertAdjMap = GetAdjacenciesForVertex(newPlaceHolderVert);
+				if (NewPlaceHolderVertAdjMap)
+				{
+					NewPlaceHolderVertAdjMap->setAllAdjacencies(placeHolderAdjacencies);
+				}
+			}
+			
+			firstNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(firstNeighborDirection) + 1) % 6);
+			secondNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(secondNeighborDirection) + 1) % 6);
+			thirdNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(thirdNeighborDirection) + 1) % 6);
+		}
+
+		return graphVertex;
 	}
+	else
+	{
+		// Fallback to legacy method
+		//Spawn the first vertex actor for the graph
+		AGraphVertex* firstVertex = Cast<AGraphVertex>(AddVertexWithAdjacencies(defaultVertexClass, 0, 0, FTransform(), { "1:0", "1:1", "0:1", "-1:0", "0:-1", "1:-1" }, false));
 
-	return firstVertex;
+		//TODO: Add verification that the X and Y directions of all possibleVertices are consistent
+
+		//Set the MeshLength of the vertices
+		FTransform vertexTransform = firstVertex->GetTransform();
+		FBoxSphereBounds vertexBounds = firstVertex->MeshComponent->CalcBounds(vertexTransform);
+		MeshLength = vertexBounds.BoxExtent.X * 2.0f;
+
+		//Build PlaceHolderVertices for all 6 directions
+		EHexagonDirection firstNeighborDirection = EHexagonDirection::Southeast;
+		EHexagonDirection secondNeighborDirection = EHexagonDirection::South;
+		EHexagonDirection thirdNeighborDirection = EHexagonDirection::Southwest;
+		for (int i = 0; i < 6; i++)
+		{
+			AVertex* newPlaceHolderVert = AddVertexInDirection(placeHolderVertexClass, firstVertex, static_cast<EHexagonDirection>(i));
+			
+			TArray<FString> placeHolderAdjacencies = { "", "", "", "", "", "" };
+
+			placeHolderAdjacencies[static_cast<int32>(firstNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, firstNeighborDirection);
+			placeHolderAdjacencies[static_cast<int32>(secondNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, secondNeighborDirection);
+			placeHolderAdjacencies[static_cast<int32>(thirdNeighborDirection)] = GetCoordInDirection(newPlaceHolderVert, thirdNeighborDirection);
+
+			UAdjacencyMap* NewPlaceHolderVertAdjMap2 = GetAdjacenciesForVertex(newPlaceHolderVert);
+			if (NewPlaceHolderVertAdjMap2)
+			{
+				NewPlaceHolderVertAdjMap2->setAllAdjacencies(placeHolderAdjacencies);
+			}
+
+			firstNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(firstNeighborDirection) + 1) % 6);
+			secondNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(secondNeighborDirection) + 1) % 6);
+			thirdNeighborDirection = static_cast<EHexagonDirection>((static_cast<int32>(thirdNeighborDirection) + 1) % 6);
+		}
+
+		return firstVertex;
+	}
 }
 
 AVertex* AHexGraph::AddVertexByCoord(TSubclassOf<AVertex> vertexClass, FString coord, FTransform spawnTransform, bool isTemp)
@@ -127,6 +201,9 @@ AVertex* AHexGraph::AddVertexInDirection(TSubclassOf<AVertex> vertexClass, AVert
 void AHexGraph::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Setup manager system
+	SetupManagerEventBindings();
 
 	InitializeHUD();
 
@@ -213,7 +290,12 @@ void AHexGraph::RemoveVertexAtCoord(FString coord)
 						if (neighborVert->type == EVertexType::PlaceHolder) {
 
 							//Check for any Graph neighbors of the placeholder
-							TArray<FString> phNeighbors = GetAdjacenciesForVertex(neighborVert)->adjacentVertexCoords;
+							UAdjacencyMap* NeighborVertAdjMap = GetAdjacenciesForVertex(neighborVert);
+							if (!NeighborVertAdjMap)
+							{
+								continue; // Skip if no adjacency map
+							}
+							TArray<FString> phNeighbors = NeighborVertAdjMap->adjacentVertexCoords;
 							bool noGraphNeighbor = true;
 							for (int j = 0; j < phNeighbors.Num() && noGraphNeighbor; j++)
 							{
@@ -238,13 +320,18 @@ void AHexGraph::RemoveVertexAtCoord(FString coord)
 					//Remove all references to removedVertex from the neighbor except when both are Graph vertices
 					else if (removedVertex->type == EVertexType::PlaceHolder)
 					{
-						TArray<FString> neighborAdjacencies = GetAdjacenciesForVertex(neighborVert)->adjacentVertexCoords;
+						UAdjacencyMap* NeighborVertAdjMap2 = GetAdjacenciesForVertex(neighborVert);
+						if (!NeighborVertAdjMap2)
+						{
+							continue; // Skip if no adjacency map
+						}
+						TArray<FString> neighborAdjacencies = NeighborVertAdjMap2->adjacentVertexCoords;
 						for (FString& adjacencyCoord : neighborAdjacencies) {
 							if (adjacencyCoord == coord) {
 								adjacencyCoord = "";
 							}
 						}
-						GetAdjacenciesForVertex(neighborVert)->setAllAdjacencies(neighborAdjacencies);
+						NeighborVertAdjMap2->setAllAdjacencies(neighborAdjacencies);
 					}
 				}
 			}
@@ -491,11 +578,21 @@ void AHexGraph::RefreshSettingsValues()
 		   VertexSpacing, PanSpeed, ZoomPercent, maxFillDepth);
 }
 
+void AHexGraph::RefreshSettings()
+{
+	RefreshSettingsValues();
+	UE_LOG(LogHexGraph, Log, TEXT("RefreshSettings: Manual settings refresh completed via console command"));
+}
+
 //Adds a vertex to the map and sets its adjacencies to the given list; adds adjacencies for all neighbors if forceBiDirectionalAdjacency is set to true
 AVertex* AHexGraph::AddVertexWithAdjacencies(TSubclassOf<AVertex> vertexClass, int row, int col, FTransform spawnTransform, TArray<FString> adjacencies, bool isTemp)
 {
 	AVertex* newVertex = AddVertexByRowCol(vertexClass, row, col, spawnTransform);
-	GetAdjacenciesForVertex(newVertex)->setAllAdjacencies(adjacencies);
+	UAdjacencyMap* NewVertexAdjMap = GetAdjacenciesForVertex(newVertex);
+	if (NewVertexAdjMap)
+	{
+		NewVertexAdjMap->setAllAdjacencies(adjacencies);
+	}
 
 	return newVertex;
 }
@@ -532,11 +629,23 @@ AVertex* AHexGraph::PromotePlaceholderToInstance(APlaceHolderVertex* placeHolder
 				//Ensure bidirectional adjacency with all other vertices
 				if (vertices.Contains(coord)) {
 					placeHolderAdjacencies[j] = coord;
-					GetAdjacenciesForVertex(GetVertex(coord))->setDirectionsAdjacency((j + 3)%6, newPlaceHolder->Coord());
+					UAdjacencyMap* ExistingVertexAdjMap = GetAdjacenciesForVertex(GetVertex(coord));
+					if (ExistingVertexAdjMap)
+					{
+						ExistingVertexAdjMap->setDirectionsAdjacency((j + 3)%6, newPlaceHolder->Coord());
+					}
 				}
 			}
-			GetAdjacenciesForVertex(newPlaceHolder)->setAllAdjacencies(placeHolderAdjacencies);
-			GetAdjacenciesForVertex(promotedVertex)->setDirectionsAdjacency(i, newPlaceHolder->Coord());
+			UAdjacencyMap* NewPlaceHolderAdjMap = GetAdjacenciesForVertex(newPlaceHolder);
+			if (NewPlaceHolderAdjMap)
+			{
+				NewPlaceHolderAdjMap->setAllAdjacencies(placeHolderAdjacencies);
+			}
+			UAdjacencyMap* PromotedVertexAdjMap = GetAdjacenciesForVertex(promotedVertex);
+			if (PromotedVertexAdjMap)
+			{
+				PromotedVertexAdjMap->setDirectionsAdjacency(i, newPlaceHolder->Coord());
+			}
 
 			newPlaceHolders.Add(newPlaceHolder->Coord());
 		}
@@ -1065,17 +1174,30 @@ void AHexGraph::OnVertexHoverEnd(AActor* hoveredVertex)
 
 void AHexGraph::HandleVertexLeftClick(AVertex* clickedVertex)
 {
+	if (!clickedVertex)
+	{
+		return;
+	}
+
 	UE_LOG(LogHexGraph, Log, TEXT("Adjacencies for clicked Vertex:\n %s"), *(*adjacencyMatrix.Find(clickedVertex->Coord()))->adjacencyString());
 
 	APlaceHolderVertex* placeHolderVertex = Cast<APlaceHolderVertex>(clickedVertex);
 
 	if (placeHolderVertex) {
-		PromotePlaceholderToInstance(placeHolderVertex);
+		// Use VertexManager if available
+		if (VertexManager)
+		{
+			VertexManager->PromoteToGraphVertex(placeHolderVertex);
+		}
+		else
+		{
+			// Fallback to legacy method
+			PromotePlaceholderToInstance(placeHolderVertex);
+		}
 	}
 	else {
 		UE_LOG(LogHexGraph, Log, TEXT("Instance Vertex Left Clicked"))
 	}
-
 }
 
 FString AHexGraph::intsToCoordString(int row, int col)
@@ -1121,17 +1243,35 @@ void AHexGraph::coordStringToInts(const FString coord, int& row, int& col)
 void AHexGraph::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	StaticMeshComp->SetWorldRotation(Rotation);
+	
+	// Update camera controller if available
+	if (CameraController)
+	{
+		CameraController->UpdateCamera(DeltaTime);
+	}
+	else
+	{
+		// Fallback to legacy rotation handling
+		StaticMeshComp->SetWorldRotation(Rotation);
+	}
+	
+	// Handle mouse coordinate tracking and drawing system updates
 	FString currentCoord = GetCoordFromMousePosition();
 
 	if (currentCoord != hoveredCoord) {
 		hoveredCoord = currentCoord;
-		if (pieceSelected) {
+		
+		// Update drawing system if available
+		if (DrawingSystem && DrawingSystem->IsDrawingActive())
+		{
+			FHexCoordinate HexCoord = FHexCoordinate::FromString(currentCoord);
+			DrawingSystem->UpdatePreview(HexCoord);
+		}
+		else if (pieceSelected) {
+			// Fallback to legacy drawing
 			DrawTempPiece();
 		}
 	}
-	
-
 }
 
 void AHexGraph::InitializeHUD()
@@ -1146,28 +1286,37 @@ void AHexGraph::SetupPlayerInputComponent(class UInputComponent* PlayerInputComp
 {
 	if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent))
 	{
-		//Select
-		EnhancedInputComponent->BindAction(ia_Select, ETriggerEvent::Triggered, this, &AHexGraph::OnSelect);
-		
-		//LineDraw
-		EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Started, this, &AHexGraph::OnStartLineDraw);
-		EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Triggered, this, &AHexGraph::PreviewLineDraw);
-		EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Completed, this, &AHexGraph::OnStopLineDraw);
-		EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Canceled, this, &AHexGraph::OnStopLineDraw);
+		// Use InputHandler if available, otherwise fall back to direct binding
+		if (InputHandler)
+		{
+			InputHandler->SetupInputBindings(EnhancedInputComponent);
+		}
+		else
+		{
+			// Fallback to original direct bindings
+			//Select
+			EnhancedInputComponent->BindAction(ia_Select, ETriggerEvent::Triggered, this, &AHexGraph::OnSelect);
+			
+			//LineDraw
+			EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Started, this, &AHexGraph::OnStartLineDraw);
+			EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Triggered, this, &AHexGraph::PreviewLineDraw);
+			EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Completed, this, &AHexGraph::OnStopLineDraw);
+			EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Canceled, this, &AHexGraph::OnStopLineDraw);
 
-		//Delete
-		EnhancedInputComponent->BindAction(ia_Delete, ETriggerEvent::Triggered, this, &AHexGraph::OnDelete);
+			//Delete
+			EnhancedInputComponent->BindAction(ia_Delete, ETriggerEvent::Triggered, this, &AHexGraph::OnDelete);
 
-		//Camera Controls
-		EnhancedInputComponent->BindAction(ia_Zoom, ETriggerEvent::Triggered, this, &AHexGraph::OnZoom);
-		EnhancedInputComponent->BindAction(ia_Rotate, ETriggerEvent::Triggered, this, &AHexGraph::OnRotate);
-		EnhancedInputComponent->BindAction(ia_MoveForward, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveForward);
-		EnhancedInputComponent->BindAction(ia_MoveBack, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveBack);
-		EnhancedInputComponent->BindAction(ia_MoveLeft, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveLeft);
-		EnhancedInputComponent->BindAction(ia_MoveRight, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveRight);
+			//Camera Controls
+			EnhancedInputComponent->BindAction(ia_Zoom, ETriggerEvent::Triggered, this, &AHexGraph::OnZoom);
+			EnhancedInputComponent->BindAction(ia_Rotate, ETriggerEvent::Triggered, this, &AHexGraph::OnRotate);
+			EnhancedInputComponent->BindAction(ia_MoveForward, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveForward);
+			EnhancedInputComponent->BindAction(ia_MoveBack, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveBack);
+			EnhancedInputComponent->BindAction(ia_MoveLeft, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveLeft);
+			EnhancedInputComponent->BindAction(ia_MoveRight, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveRight);
 
-		//Fill
-		EnhancedInputComponent->BindAction(ia_Fill, ETriggerEvent::Started, this, &AHexGraph::OnFill);
+			//Fill
+			EnhancedInputComponent->BindAction(ia_Fill, ETriggerEvent::Started, this, &AHexGraph::OnFill);
+		}
 	}
 }
 
@@ -1176,5 +1325,162 @@ FVector2D AHexGraph::GetUnitVectorInHexDirection(int direction)
 	float Angle = direction * 60.0f * PI / 180.0f;
 	FVector2D UnitVector(FMath::Cos(Angle), FMath::Sin(Angle));
 	return UnitVector;
+}
+
+void AHexGraph::InitializeManagers()
+{
+	// Create manager instances as default subobjects
+	VertexManager = CreateDefaultSubobject<UHexVertexManager>(TEXT("VertexManager"));
+	InputHandler = CreateDefaultSubobject<UHexInputHandler>(TEXT("InputHandler"));
+	CameraController = CreateDefaultSubobject<UHexCameraController>(TEXT("CameraController"));
+	DrawingSystem = CreateDefaultSubobject<UHexDrawingSystem>(TEXT("DrawingSystem"));
+
+	UE_LOG(LogHexGraph, Log, TEXT("HexGraph: Manager instances created"));
+}
+
+void AHexGraph::SetupManagerEventBindings()
+{
+	if (!VertexManager || !InputHandler || !CameraController || !DrawingSystem)
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("HexGraph::SetupManagerEventBindings: One or more managers are null"));
+		return;
+	}
+
+	// Initialize managers with dependencies
+	VertexManager->Initialize(this);
+	InputHandler->Initialize(this);
+	CameraController->Initialize(this, SpringArmComp, CameraComp);
+	DrawingSystem->Initialize(this, VertexManager);
+
+	// Bind input events to appropriate handlers
+	if (InputHandler)
+	{
+		InputHandler->OnSelectEvent.AddDynamic(this, &AHexGraph::HandleSelectInput);
+		InputHandler->OnDeleteEvent.AddDynamic(this, &AHexGraph::HandleDeleteInput);
+		InputHandler->OnFillEvent.AddDynamic(this, &AHexGraph::HandleFillInput);
+		InputHandler->OnLineDrawStartEvent.AddDynamic(this, &AHexGraph::HandleLineDrawStart);
+		InputHandler->OnLineDrawStopEvent.AddDynamic(this, &AHexGraph::HandleLineDrawStop);
+		InputHandler->OnZoomEvent.AddDynamic(this, &AHexGraph::HandleZoomInput);
+		InputHandler->OnRotateEvent.AddDynamic(this, &AHexGraph::HandleRotateInput);
+		InputHandler->OnMoveEvent.AddDynamic(this, &AHexGraph::HandleMoveInput);
+	}
+
+	UE_LOG(LogHexGraph, Log, TEXT("HexGraph: Manager event bindings setup complete"));
+}
+
+// Manager Event Handler Implementations
+void AHexGraph::HandleSelectInput()
+{
+	// Delegate to original OnSelect logic
+	OnSelect();
+}
+
+void AHexGraph::HandleDeleteInput()
+{
+	// Delegate to original OnDelete logic
+	OnDelete();
+}
+
+void AHexGraph::HandleFillInput()
+{
+	// Delegate to original OnFill logic
+	OnFill();
+}
+
+void AHexGraph::HandleLineDrawStart()
+{
+	// Use DrawingSystem if available
+	if (DrawingSystem && hoverTarget)
+	{
+		FHexCoordinate StartCoord = FHexCoordinate::FromString(hoverTarget->Coord());
+		DrawingSystem->StartDrawing(EHexDrawingMode::LineDraw, StartCoord);
+	}
+	else
+	{
+		// Fallback to original OnStartLineDraw logic
+		OnStartLineDraw();
+	}
+}
+
+void AHexGraph::HandleLineDrawStop()
+{
+	// Use DrawingSystem if available
+	if (DrawingSystem && DrawingSystem->IsDrawingActive())
+	{
+		DrawingSystem->StopDrawing(true); // Commit changes
+	}
+	else
+	{
+		// Fallback to original OnStopLineDraw logic
+		OnStopLineDraw();
+	}
+}
+
+void AHexGraph::HandleZoomInput(float ZoomDelta)
+{
+	// Delegate to camera controller
+	if (CameraController)
+	{
+		CameraController->ProcessZoom(ZoomDelta);
+	}
+	else
+	{
+		// Fallback to original OnZoom logic
+		FInputActionValue Value = FInputActionValue(ZoomDelta);
+		OnZoom(Value);
+	}
+}
+
+void AHexGraph::HandleRotateInput()
+{
+	// Delegate to camera controller
+	if (CameraController)
+	{
+		CameraController->ProcessRotation();
+	}
+	else
+	{
+		// Fallback to original OnRotate logic
+		OnRotate();
+	}
+}
+
+void AHexGraph::HandleMoveInput(FVector2D MovementVector)
+{
+	// Delegate to camera controller
+	if (CameraController)
+	{
+		CameraController->ProcessMovement(MovementVector);
+	}
+	else
+	{
+		// Fallback to original movement logic
+		// Convert 2D vector back to individual axis calls
+		if (FMath::Abs(MovementVector.X) > 0.1f)
+		{
+			FInputActionValue Value = FInputActionValue(static_cast<float>(MovementVector.X));
+			if (MovementVector.X > 0)
+			{
+				OnMoveForward(Value);
+			}
+			else
+			{
+				OnMoveBack(Value);
+			}
+		}
+		
+		if (FMath::Abs(MovementVector.Y) > 0.1f)
+		{
+			FInputActionValue Value = FInputActionValue(static_cast<float>(MovementVector.Y));
+			if (MovementVector.Y > 0)
+			{
+				OnMoveRight(Value);
+			}
+			else
+			{
+				OnMoveLeft(Value);
+			}
+		}
+	}
 }
 

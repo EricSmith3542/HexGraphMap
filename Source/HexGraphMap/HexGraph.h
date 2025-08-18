@@ -12,6 +12,10 @@
 #include "PlaceHolderVertex.h"
 #include "AdjacencyMap.h"
 #include "HexGraphSettings.h"
+#include "HexVertexManager.h"
+#include "HexInputHandler.h"
+#include "HexCameraController.h"
+#include "HexDrawingSystem.h"
 #include "Containers/Map.h"
 #include "Templates/SharedPointer.h"
 #include "Math/UnrealMathUtility.h"
@@ -62,6 +66,19 @@ public:
 	// Managed adjacency map tracking for proper cleanup
 	UPROPERTY()
 	TArray<TObjectPtr<UAdjacencyMap>> ManagedAdjacencyMaps;
+
+	// Manager System Components
+	UPROPERTY(BlueprintReadOnly, Category = "Managers")
+	TObjectPtr<class UHexVertexManager> VertexManager;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Managers")
+	TObjectPtr<class UHexInputHandler> InputHandler;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Managers")
+	TObjectPtr<class UHexCameraController> CameraController;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Managers")
+	TObjectPtr<class UHexDrawingSystem> DrawingSystem;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hex Graph")
 	float VertexSpacing;
@@ -140,6 +157,10 @@ public:
 	// Settings helpers
 	UFUNCTION(BlueprintCallable, Category = "HexGraph")
 	void RefreshSettingsValues();
+	
+	// Console command for manual settings refresh
+	UFUNCTION(Exec, BlueprintCallable, Category = "HexGraph")
+	void RefreshSettings();
 	
 	UFUNCTION(BLueprintCallable, Category = "HexGraph")
 	void InitializeVertex(AVertex* vertex, int row, int col, bool isTemp = false, UAdjacencyMap* adjacencyMap = nullptr);
@@ -268,6 +289,35 @@ protected:
 	FRotator Rotation = FRotator();
 
 	void InitializeHUD();
+
+	// Manager System Functions
+	void InitializeManagers();
+	void SetupManagerEventBindings();
+
+	// Manager Event Handlers
+	UFUNCTION()
+	void HandleSelectInput();
+	
+	UFUNCTION()
+	void HandleDeleteInput();
+	
+	UFUNCTION()
+	void HandleFillInput();
+	
+	UFUNCTION()
+	void HandleLineDrawStart();
+	
+	UFUNCTION()
+	void HandleLineDrawStop();
+	
+	UFUNCTION()
+	void HandleZoomInput(float ZoomDelta);
+	
+	UFUNCTION()
+	void HandleRotateInput();
+	
+	UFUNCTION()
+	void HandleMoveInput(FVector2D MovementVector);
 
 public:	
 	// Called every frame

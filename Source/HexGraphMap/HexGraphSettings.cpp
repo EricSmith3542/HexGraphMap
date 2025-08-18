@@ -3,6 +3,12 @@
 #include "HexGraphSettings.h"
 #include "HexGraphMap.h"
 
+#if WITH_EDITOR
+#include "Engine/World.h"
+#include "UObject/UObjectIterator.h"
+#include "HexGraph.h"
+#endif
+
 UHexGraphSettings::UHexGraphSettings()
 {
 	// Set category and section names for the settings panel
@@ -59,6 +65,36 @@ void UHexGraphSettings::PostEditChangeProperty(FPropertyChangedEvent& PropertyCh
 	{
 		UE_LOG(LogHexGraph, Log, TEXT("HexGraphSettings: Property '%s' changed"), *PropertyChangedEvent.Property->GetName());
 	}
+	
+	// Notify all HexGraph instances to refresh their settings
+	RefreshAllHexGraphInstances();
+}
+
+void UHexGraphSettings::RefreshAllHexGraphInstances()
+{
+	UE_LOG(LogHexGraph, Log, TEXT("HexGraphSettings: Refreshing all HexGraph instances with new settings"));
+	
+	int32 RefreshedInstances = 0;
+	
+	// Iterate through all HexGraph instances in all worlds
+	for (TObjectIterator<AHexGraph> HexGraphIterator; HexGraphIterator; ++HexGraphIterator)
+	{
+		AHexGraph* HexGraphInstance = *HexGraphIterator;
+		if (IsValid(HexGraphInstance))
+		{
+			// Check if the instance is in a valid world (not being destroyed)
+			UWorld* World = HexGraphInstance->GetWorld();
+			if (IsValid(World) && !World->bIsTearingDown)
+			{
+				HexGraphInstance->RefreshSettingsValues();
+				RefreshedInstances++;
+				UE_LOG(LogHexGraph, VeryVerbose, TEXT("HexGraphSettings: Refreshed settings for HexGraph instance '%s'"), 
+					   *HexGraphInstance->GetName());
+			}
+		}
+	}
+	
+	UE_LOG(LogHexGraph, Log, TEXT("HexGraphSettings: Successfully refreshed %d HexGraph instances"), RefreshedInstances);
 }
 #endif
 

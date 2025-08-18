@@ -94,6 +94,11 @@ public:
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	
+	/**
+	 * Refresh all HexGraph instances in the world when settings change
+	 */
+	void RefreshAllHexGraphInstances();
 #endif
 
 private:
