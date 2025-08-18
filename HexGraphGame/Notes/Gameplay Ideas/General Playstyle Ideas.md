@@ -1,0 +1,8 @@
+- Hero Pieces
+- Land Control/Manipulation
+- Zerg Pieces
+- Player Power?? (like the player/wizard itself would have stats that could impact the game somehow. IDK how this would work without feeling like some kind of omnipotent god-role. Would have to be equal strength to similar things accomplished by tiles and pieces)
+	- In a single player puzzle game, this wouldnt be too big of an issue because these outside powers could be something specific to the PC to give them an edge against NPCs. Think Inscryption's scissors/carpet bomb/other items but with PC abilities
+		- Nuke a selection of tiles
+		- Buff all units in a tile
+		- Convert tile type

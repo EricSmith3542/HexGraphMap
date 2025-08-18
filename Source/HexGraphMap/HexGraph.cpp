@@ -5,6 +5,7 @@
 #include "HexGraphMap.h"
 #include "HexGraphValidation.h"
 #include "HexGraphSettings.h"
+#include "HexCoordinateUtils.h"
 #include "EnhancedInputComponent.h"
 #include <EnhancedInputSubsystems.h>
 
@@ -138,7 +139,9 @@ AGraphVertex* AHexGraph::AddFirstVertex()
 		EHexagonDirection thirdNeighborDirection = EHexagonDirection::Southwest;
 		for (int i = 0; i < 6; i++)
 		{
-			AVertex* newPlaceHolderVert = AddVertexInDirection(placeHolderVertexClass, firstVertex, static_cast<EHexagonDirection>(i));
+			AVertex* newPlaceHolderVert = VertexManager ? 
+				VertexManager->CreateVertexInDirection(placeHolderVertexClass, firstVertex, static_cast<EHexagonDirection>(i), false) :
+				AddVertexInDirection(placeHolderVertexClass, firstVertex, static_cast<EHexagonDirection>(i));
 			
 			TArray<FString> placeHolderAdjacencies = { "", "", "", "", "", "" };
 
@@ -618,7 +621,9 @@ AVertex* AHexGraph::PromotePlaceholderToInstance(APlaceHolderVertex* placeHolder
 	for (int i = 0; i < neighbors.Num(); i++)
 	{
 		if (neighbors[i] == "") {
-			AVertex* newPlaceHolder = AddVertexInDirection(placeHolderVertexClass, promotedVertex, static_cast<EHexagonDirection>(i));
+			AVertex* newPlaceHolder = VertexManager ? 
+				VertexManager->CreateVertexInDirection(placeHolderVertexClass, promotedVertex, static_cast<EHexagonDirection>(i), false) :
+				AddVertexInDirection(placeHolderVertexClass, promotedVertex, static_cast<EHexagonDirection>(i));
 
 			//Check all directions for adjacencies
 			TArray<FString> placeHolderAdjacencies = { "", "", "", "", "", "" };
@@ -946,28 +951,39 @@ void AHexGraph::FillConnections(AVertex* vert, int depth)
 
 void AHexGraph::OnZoom(const FInputActionValue& value)
 {
-	float zoomValue = value.Get<float>();
-
-	ZoomPercent += zoomValue;
-	//ZoomPercent = FMath::Clamp<float>(ZoomPercent, -250.0f, 500.0f);
-
-	//Blend our camera's FOV and our SpringArm's length based on ZoomFactor
-	//CameraComp->FieldOfView = FMath::Lerp<float>(90.0f, 60.0f, ZoomPercent/100.f);
-	SpringArmComp->TargetArmLength = FMath::Lerp<float>(400.0f, 300.0f, ZoomPercent/100.f);
+	// Delegate to CameraController if available, otherwise use legacy method
+	if (CameraController)
+	{
+		float zoomValue = value.Get<float>();
+		CameraController->ProcessZoom(zoomValue);
+	}
+	else
+	{
+		// Legacy fallback
+		float zoomValue = value.Get<float>();
+		ZoomPercent += zoomValue;
+		SpringArmComp->TargetArmLength = FMath::Lerp<float>(400.0f, 300.0f, ZoomPercent/100.f);
+	}
 }
 
 void AHexGraph::OnRotate()
 {
-	APlayerController* PlayerController = GetWorld()->GetFirstPlayerController();
-
-	float mouseX, mouseY;
-	PlayerController->GetInputMouseDelta(mouseX, mouseY);
-
-	FRotator NewRotation = StaticMeshComp->GetComponentRotation();
-	NewRotation.Yaw += mouseX;
-	NewRotation.Pitch = FMath::Clamp(NewRotation.Pitch + mouseY, 0.f, 85.f);
-	//SpringArmComp->SetRelativeRotation(NewRotation);
-	Rotation = NewRotation;
+	// Delegate to CameraController if available, otherwise use legacy method
+	if (CameraController)
+	{
+		CameraController->ProcessRotation();
+	}
+	else
+	{
+		// Legacy fallback
+		APlayerController* PlayerController = GetWorld()->GetFirstPlayerController();
+		float mouseX, mouseY;
+		PlayerController->GetInputMouseDelta(mouseX, mouseY);
+		FRotator NewRotation = StaticMeshComp->GetComponentRotation();
+		NewRotation.Yaw += mouseX;
+		NewRotation.Pitch = FMath::Clamp(NewRotation.Pitch + mouseY, 0.f, 85.f);
+		Rotation = NewRotation;
+	}
 }
 
 void AHexGraph::OnMoveForward(const FInputActionValue& value)
@@ -1050,7 +1066,9 @@ void AHexGraph::PreviewLineDraw()
 
 		FString previewCoord = GetCoordInDirection(selectedActor, hexDirectionToCursor);
 
-		AVertex* newPreview = AddVertexInDirection(previewVertexClass, selectedActor, hexDirectionToCursor, true);
+		AVertex* newPreview = VertexManager ? 
+			VertexManager->CreateVertexInDirection(previewVertexClass, selectedActor, hexDirectionToCursor, true) :
+			AddVertexInDirection(previewVertexClass, selectedActor, hexDirectionToCursor, true);
 		previewVertices.Add(newPreview);
 		lastPreview = newPreview;
 		
@@ -1202,41 +1220,16 @@ void AHexGraph::HandleVertexLeftClick(AVertex* clickedVertex)
 
 FString AHexGraph::intsToCoordString(int row, int col)
 {
-	return  FString::Printf(TEXT("%d:%d"), row, col);
+	// Delegate to coordinate utils for consistency
+	return FHexCoordinate(row, col).ToString();
 }
 
 void AHexGraph::coordStringToInts(const FString coord, int& row, int& col)
 {
-	// Initialize output values to invalid state
-	row = 0;
-	col = 0;
-	
-	// Validate coordinate string format
-	if (!UHexGraphValidation::IsValidCoordinateString(coord))
-	{
-		UE_LOG(LogHexGraph, Error, TEXT("coordStringToInts: Invalid coordinate string format '%s'"), *coord);
-		return;
-	}
-	
-	// Parse the coordinate string
-	TArray<FString> coordParts;
-	coord.ParseIntoArray(coordParts, TEXT(":"), true);
-	
-	// Validate we have exactly 2 parts
-	HEXGRAPH_VALIDATE_ARRAY_INDEX(coordParts, 0, );
-	HEXGRAPH_VALIDATE_ARRAY_INDEX(coordParts, 1, );
-	
-	// Convert strings to integers
-	row = FCString::Atoi(*coordParts[0]);
-	col = FCString::Atoi(*coordParts[1]);
-	
-	// Validate the resulting coordinates
-	if (!UHexGraphValidation::IsValidCoordinate(row, col))
-	{
-		UE_LOG(LogHexGraph, Error, TEXT("coordStringToInts: Parsed coordinates (%d, %d) are out of valid range"), row, col);
-		row = 0;
-		col = 0;
-	}
+	// Delegate to coordinate utils for consistency
+	FHexCoordinate ParsedCoord = FHexCoordinate::FromString(coord);
+	row = ParsedCoord.Row;
+	col = ParsedCoord.Col;
 }
 
 // Called every frame
@@ -1322,9 +1315,8 @@ void AHexGraph::SetupPlayerInputComponent(class UInputComponent* PlayerInputComp
 
 FVector2D AHexGraph::GetUnitVectorInHexDirection(int direction)
 {
-	float Angle = direction * 60.0f * PI / 180.0f;
-	FVector2D UnitVector(FMath::Cos(Angle), FMath::Sin(Angle));
-	return UnitVector;
+	// Delegate to coordinate utils for consistency
+	return FHexCoordinateUtils::GetUnitVectorForDirection(static_cast<EHexagonDirection>(direction));
 }
 
 void AHexGraph::InitializeManagers()
@@ -1482,5 +1474,21 @@ void AHexGraph::HandleMoveInput(FVector2D MovementVector)
 			}
 		}
 	}
+}
+
+// FHexCoordinate overloads for improved type safety
+AVertex* AHexGraph::GetVertex(const FHexCoordinate& Coordinate)
+{
+	return GetVertex(Coordinate.ToString());
+}
+
+void AHexGraph::RemoveVertexAtCoord(const FHexCoordinate& Coordinate)
+{
+	RemoveVertexAtCoord(Coordinate.ToString());
+}
+
+AVertex* AHexGraph::AddVertexByCoord(TSubclassOf<AVertex> vertexClass, const FHexCoordinate& Coordinate, FTransform spawnTransform, bool isTemp)
+{
+	return AddVertexByCoord(vertexClass, Coordinate.ToString(), spawnTransform, isTemp);
 }
 

@@ -1,0 +1,5 @@
+Fuck pieces, the only thing that exists are tiles. Each game starts with players drafting for tiles against eachother, probably MTG style because MTG draft is the best. Then gameplay would be entirely about placing your pieces in the optimal positions in order to score more than your opponents. Everyone would take turn placing pieces.
+
+There could be multiple rounds of both playing and drafting
+
+For example, maybe there is the initial draft of all pieces, but then after play, each player only gets to keep the tiles placed in the outer row of their "slice". Then all other pieces go back into drafting, players redraft, and then play again. Then each round, more and more rows would be kept, leading to one final round where everyone theoretically knows what every other player has in their full "deck"

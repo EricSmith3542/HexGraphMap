@@ -137,6 +137,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HexGraph")
 	void RemoveVertexAtCoord(FString coord);
 
+	// FHexCoordinate overloads for improved type safety
+	AVertex* GetVertex(const FHexCoordinate& Coordinate);
+	void RemoveVertexAtCoord(const FHexCoordinate& Coordinate);
+	AVertex* AddVertexByCoord(TSubclassOf<AVertex> vertexClass, const FHexCoordinate& Coordinate, FTransform spawnTransform, bool isTemp = false);
+
 	UFUNCTION(BlueprintCallable, Category = "HexGraph")
 	UAdjacencyMap* GetAdjacenciesForVertex(AVertex* vertex);
 

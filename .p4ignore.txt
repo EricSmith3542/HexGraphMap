@@ -1,0 +1,14 @@
+# Ignore all Intermediate and Saved directories
+*/Intermediate/*
+*/Saved/*
+*/DerivedDataCache/*
+*/Build/*
+*/.vs/*
+.vsconfig
+
+#Ignore resource files
+
+*/obj/*
+*/fbx/*
+*/psd/*
+*/tga/*

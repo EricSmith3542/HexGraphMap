@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell:*)",
+      "Bash(\"C:\\Program Files\\Epic Games\\UE_5.3\\Engine\\Binaries\\DotNET\\UnrealBuildTool\\UnrealBuildTool.exe\" HexGraphMap Development Win64 -Project=\"C:\\Users\\Eric\\Documents\\Game_Dev\\Unreal_Engine_Work\\HexGraphMap\\HexGraphMap.uproject\" -WaitMutex -FromMsBuild)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(grep:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
