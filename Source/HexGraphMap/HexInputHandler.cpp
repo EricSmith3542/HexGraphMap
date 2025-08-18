@@ -3,6 +3,7 @@
 #include "HexInputHandler.h"
 #include "HexGraph.h"
 #include "HexGraphMap.h"
+#include "HexGraphEventManager.h"
 #include "EnhancedInputComponent.h"
 
 UHexInputHandler::UHexInputHandler()
@@ -43,65 +44,104 @@ void UHexInputHandler::SetupInputBindings(UEnhancedInputComponent* InputComponen
 		return;
 	}
 
+	// Use the HexGraph's existing input actions to restore original functionality
+	AHexGraph* HexGraph = OwningHexGraph.Get();
+	
 	// Bind select action
-	if (SelectAction)
+	if (HexGraph && HexGraph->ia_Select)
 	{
-		InputComponent->BindAction(SelectAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleSelectInput);
+		InputComponent->BindAction(HexGraph->ia_Select, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleSelectInput);
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_Select is not set in HexGraph"));
 	}
 
 	// Bind delete action
-	if (DeleteAction)
+	if (HexGraph && HexGraph->ia_Delete)
 	{
-		InputComponent->BindAction(DeleteAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleDeleteInput);
+		InputComponent->BindAction(HexGraph->ia_Delete, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleDeleteInput);
 	}
-
-	// Bind fill action
-	if (FillAction)
+	else
 	{
-		InputComponent->BindAction(FillAction, ETriggerEvent::Started, this, &UHexInputHandler::HandleFillInput);
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_Delete is not set in HexGraph"));
 	}
 
 	// Bind line draw actions
-	if (LineDrawAction)
+	if (HexGraph && HexGraph->ia_StartLineDraw)
 	{
-		InputComponent->BindAction(LineDrawAction, ETriggerEvent::Started, this, &UHexInputHandler::HandleLineDrawStart);
-		InputComponent->BindAction(LineDrawAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleLineDrawOngoing);
-		InputComponent->BindAction(LineDrawAction, ETriggerEvent::Completed, this, &UHexInputHandler::HandleLineDrawStop);
-		InputComponent->BindAction(LineDrawAction, ETriggerEvent::Canceled, this, &UHexInputHandler::HandleLineDrawCancel);
+		InputComponent->BindAction(HexGraph->ia_StartLineDraw, ETriggerEvent::Started, this, &UHexInputHandler::HandleLineDrawStart);
+		InputComponent->BindAction(HexGraph->ia_StartLineDraw, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleLineDrawOngoing);
+		InputComponent->BindAction(HexGraph->ia_StartLineDraw, ETriggerEvent::Completed, this, &UHexInputHandler::HandleLineDrawStop);
+		InputComponent->BindAction(HexGraph->ia_StartLineDraw, ETriggerEvent::Canceled, this, &UHexInputHandler::HandleLineDrawCancel);
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_StartLineDraw is not set in HexGraph"));
 	}
 
 	// Bind camera controls
-	if (ZoomAction)
+	if (HexGraph && HexGraph->ia_Zoom)
 	{
-		InputComponent->BindAction(ZoomAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleZoomInput);
+		InputComponent->BindAction(HexGraph->ia_Zoom, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleZoomInput);
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_Zoom is not set in HexGraph"));
 	}
 
-	if (RotateAction)
+	if (HexGraph && HexGraph->ia_Rotate)
 	{
-		InputComponent->BindAction(RotateAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleRotateInput);
+		InputComponent->BindAction(HexGraph->ia_Rotate, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleRotateInput);
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_Rotate is not set in HexGraph"));
 	}
 
-	if (MoveForwardAction)
+	if (HexGraph && HexGraph->ia_MoveForward)
 	{
-		InputComponent->BindAction(MoveForwardAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleMoveForwardInput);
+		InputComponent->BindAction(HexGraph->ia_MoveForward, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleMoveForwardInput);
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_MoveForward is not set in HexGraph"));
 	}
 
-	if (MoveBackAction)
+	if (HexGraph && HexGraph->ia_MoveBack)
 	{
-		InputComponent->BindAction(MoveBackAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleMoveBackInput);
+		InputComponent->BindAction(HexGraph->ia_MoveBack, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleMoveBackInput);
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_MoveBack is not set in HexGraph"));
 	}
 
-	if (MoveLeftAction)
+	if (HexGraph && HexGraph->ia_MoveLeft)
 	{
-		InputComponent->BindAction(MoveLeftAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleMoveLeftInput);
+		InputComponent->BindAction(HexGraph->ia_MoveLeft, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleMoveLeftInput);
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_MoveLeft is not set in HexGraph"));
 	}
 
-	if (MoveRightAction)
+	if (HexGraph && HexGraph->ia_MoveRight)
 	{
-		InputComponent->BindAction(MoveRightAction, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleMoveRightInput);
+		InputComponent->BindAction(HexGraph->ia_MoveRight, ETriggerEvent::Triggered, this, &UHexInputHandler::HandleMoveRightInput);
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ia_MoveRight is not set in HexGraph"));
 	}
 
-	UE_LOG(LogHexGraph, Log, TEXT("HexInputHandler: Input bindings setup complete"));
+	// Bind fill action if it exists in HexGraph
+	if (HexGraph && HexGraph->ia_Fill)
+	{
+		InputComponent->BindAction(HexGraph->ia_Fill, ETriggerEvent::Started, this, &UHexInputHandler::HandleFillInput);
+	}
+
+	UE_LOG(LogHexGraph, Log, TEXT("HexInputHandler: Input bindings setup complete using HexGraph input actions"));
 }
 
 void UHexInputHandler::SetInputMode(EHexInputMode NewMode)
@@ -119,6 +159,22 @@ void UHexInputHandler::SetInputMode(EHexInputMode NewMode)
 			OnLineDrawStopEvent.Broadcast();
 		}
 
+		// Broadcast input mode change event through central event system
+		if (OwningHexGraph.Get() && OwningHexGraph->EventManager)
+		{
+			FString ModeChangeInfo = FString::Printf(TEXT("Input mode changed from %s to %s"), 
+				*UEnum::GetValueAsString(PreviousMode), 
+				*UEnum::GetValueAsString(NewMode));
+
+			OwningHexGraph->EventManager->BroadcastEvent(
+				EHexGraphEventType::InputModeChanged, 
+				FHexCoordinate(), 
+				nullptr, 
+				OwningHexGraph.Get(), 
+				ModeChangeInfo
+			);
+		}
+
 		UE_LOG(LogHexGraph, Log, TEXT("HexInputHandler: Input mode changed from %d to %d"), 
 			   static_cast<int32>(PreviousMode), static_cast<int32>(NewMode));
 	}
@@ -126,12 +182,15 @@ void UHexInputHandler::SetInputMode(EHexInputMode NewMode)
 
 void UHexInputHandler::HandleSelectInput()
 {
+	UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: HandleSelectInput called"));
+	
 	if (!ShouldProcessInput())
 	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: ShouldProcessInput returned false"));
 		return;
 	}
 
-	UE_LOG(LogHexGraph, VeryVerbose, TEXT("HexInputHandler: Select input received"));
+	UE_LOG(LogHexGraph, Warning, TEXT("HexInputHandler: Select input received, broadcasting event"));
 	OnSelectEvent.Broadcast();
 }
 
@@ -351,3 +410,4 @@ FVector2D UHexInputHandler::CalculateMovementVector(const FInputActionValue& Val
 
 	return FVector2D::ZeroVector;
 }
+

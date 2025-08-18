@@ -392,8 +392,20 @@ UAdjacencyMap* AHexGraph::GetAdjacenciesForVertex(AVertex* vertex)
 	// Check if adjacency map exists
 	if (!adjacencyMatrix.Contains(coord))
 	{
-		UE_LOG(LogHexGraph, Error, TEXT("GetAdjacenciesForVertex: No adjacency map found for vertex at '%s'"), *coord);
-		return nullptr;
+		UE_LOG(LogHexGraph, Warning, TEXT("GetAdjacenciesForVertex: No adjacency map found for vertex at '%s', creating one"), *coord);
+		
+		// Create a new adjacency map as safety fallback
+		UAdjacencyMap* NewAdjacencyMap = CreateManagedAdjacencyMap();
+		if (NewAdjacencyMap)
+		{
+			adjacencyMatrix.Add(coord, NewAdjacencyMap);
+			return NewAdjacencyMap;
+		}
+		else
+		{
+			UE_LOG(LogHexGraph, Error, TEXT("GetAdjacenciesForVertex: Failed to create adjacency map for vertex at '%s'"), *coord);
+			return nullptr;
+		}
 	}
 	
 	// Get adjacency map and validate it
@@ -842,6 +854,10 @@ void AHexGraph::InitializeVertex(AVertex* vertex, int row, int col, bool isTemp,
 
 void AHexGraph::OnSelect()
 {
+	UE_LOG(LogHexGraph, Warning, TEXT("OnSelect called - lineDrawActivated: %s, hoverTarget: %s"), 
+		lineDrawActivated ? TEXT("true") : TEXT("false"),
+		hoverTarget ? *hoverTarget->Coord() : TEXT("null"));
+		
 	if (lineDrawActivated) {
 		CommitTempToGraph();
 		lineDrawActivated = false;
@@ -924,7 +940,18 @@ void AHexGraph::FillConnections(AVertex* vert, int depth)
 	for (int i = 0; i < connectedPHs.Num(); i++)
 	{
 		APlaceHolderVertex* vertToPromote = Cast<APlaceHolderVertex>(connectedPHs[i]);
-		connectedPHs[i] = PromotePlaceholderToInstance(vertToPromote);
+		if (vertToPromote)
+		{
+			// Use VertexManager if available, otherwise fallback to legacy method
+			if (VertexManager)
+			{
+				connectedPHs[i] = VertexManager->PromoteToGraphVertex(vertToPromote);
+			}
+			else
+			{
+				connectedPHs[i] = PromotePlaceholderToInstance(vertToPromote);
+			}
+		}
 	}
 
 	depth++;
@@ -951,15 +978,15 @@ void AHexGraph::FillConnections(AVertex* vert, int depth)
 
 void AHexGraph::OnZoom(const FInputActionValue& value)
 {
-	// Delegate to CameraController if available, otherwise use legacy method
-	if (CameraController)
+	// Temporarily force legacy camera controls for better responsiveness
+	if (false && CameraController)
 	{
 		float zoomValue = value.Get<float>();
 		CameraController->ProcessZoom(zoomValue);
 	}
 	else
 	{
-		// Legacy fallback
+		// Legacy fallback - original responsive camera controls
 		float zoomValue = value.Get<float>();
 		ZoomPercent += zoomValue;
 		SpringArmComp->TargetArmLength = FMath::Lerp<float>(400.0f, 300.0f, ZoomPercent/100.f);
@@ -968,21 +995,23 @@ void AHexGraph::OnZoom(const FInputActionValue& value)
 
 void AHexGraph::OnRotate()
 {
-	// Delegate to CameraController if available, otherwise use legacy method
-	if (CameraController)
+	// Temporarily force legacy camera controls for better responsiveness
+	if (false && CameraController)
 	{
 		CameraController->ProcessRotation();
 	}
 	else
 	{
-		// Legacy fallback
+		// Legacy fallback - original responsive camera controls
 		APlayerController* PlayerController = GetWorld()->GetFirstPlayerController();
 		float mouseX, mouseY;
 		PlayerController->GetInputMouseDelta(mouseX, mouseY);
-		FRotator NewRotation = StaticMeshComp->GetComponentRotation();
+		FRotator CurrentRotation = SpringArmComp->GetRelativeRotation();
+		FRotator NewRotation = CurrentRotation;
 		NewRotation.Yaw += mouseX;
-		NewRotation.Pitch = FMath::Clamp(NewRotation.Pitch + mouseY, 0.f, 85.f);
-		Rotation = NewRotation;
+		NewRotation.Pitch = FMath::Clamp(NewRotation.Pitch + mouseY, -85.f, 85.f);
+		SpringArmComp->SetRelativeRotation(NewRotation);
+		Rotation = NewRotation; // Keep for compatibility
 	}
 }
 
@@ -1066,12 +1095,16 @@ void AHexGraph::PreviewLineDraw()
 
 		FString previewCoord = GetCoordInDirection(selectedActor, hexDirectionToCursor);
 
+		// Simple original logic - just create preview vertices as mouse moves (builds a chain)
 		AVertex* newPreview = VertexManager ? 
 			VertexManager->CreateVertexInDirection(previewVertexClass, selectedActor, hexDirectionToCursor, true) :
 			AddVertexInDirection(previewVertexClass, selectedActor, hexDirectionToCursor, true);
-		previewVertices.Add(newPreview);
-		lastPreview = newPreview;
 		
+		if (newPreview)
+		{
+			previewVertices.Add(newPreview);
+			lastPreview = newPreview;
+		}
 	}	
 
 	if (useMouseFollower) {
@@ -1194,14 +1227,27 @@ void AHexGraph::HandleVertexLeftClick(AVertex* clickedVertex)
 {
 	if (!clickedVertex)
 	{
+		UE_LOG(LogHexGraph, Warning, TEXT("HandleVertexLeftClick: clickedVertex is null"));
 		return;
 	}
 
-	UE_LOG(LogHexGraph, Log, TEXT("Adjacencies for clicked Vertex:\n %s"), *(*adjacencyMatrix.Find(clickedVertex->Coord()))->adjacencyString());
+	UE_LOG(LogHexGraph, Warning, TEXT("HandleVertexLeftClick called for vertex at %s"), *clickedVertex->Coord());
+
+	// Safely get adjacency information
+	UAdjacencyMap* adjacencyMap = GetAdjacenciesForVertex(clickedVertex);
+	if (adjacencyMap)
+	{
+		UE_LOG(LogHexGraph, Log, TEXT("Adjacencies for clicked Vertex:\n %s"), *adjacencyMap->adjacencyString());
+	}
+	else
+	{
+		UE_LOG(LogHexGraph, Warning, TEXT("No adjacency map found for clicked vertex at %s"), *clickedVertex->Coord());
+	}
 
 	APlaceHolderVertex* placeHolderVertex = Cast<APlaceHolderVertex>(clickedVertex);
 
 	if (placeHolderVertex) {
+		UE_LOG(LogHexGraph, Warning, TEXT("Promoting placeholder vertex at %s"), *placeHolderVertex->Coord());
 		// Use VertexManager if available
 		if (VertexManager)
 		{
@@ -1237,16 +1283,12 @@ void AHexGraph::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	
-	// Update camera controller if available
-	if (CameraController)
+	// Temporarily disable camera controller updates to fix movement reset issue
+	if (false && CameraController)
 	{
 		CameraController->UpdateCamera(DeltaTime);
 	}
-	else
-	{
-		// Fallback to legacy rotation handling
-		StaticMeshComp->SetWorldRotation(Rotation);
-	}
+	// Note: Removed rotation setting since OnRotate now applies directly to SpringArmComp
 	
 	// Handle mouse coordinate tracking and drawing system updates
 	FString currentCoord = GetCoordFromMousePosition();
@@ -1279,36 +1321,87 @@ void AHexGraph::SetupPlayerInputComponent(class UInputComponent* PlayerInputComp
 {
 	if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent))
 	{
-		// Use InputHandler if available, otherwise fall back to direct binding
-		if (InputHandler)
+		// Temporarily force fallback to test direct binding
+		UE_LOG(LogHexGraph, Warning, TEXT("SetupPlayerInputComponent: InputHandler exists: %s"), InputHandler ? TEXT("true") : TEXT("false"));
+		
+		if (false) // Temporarily disable InputHandler path
 		{
 			InputHandler->SetupInputBindings(EnhancedInputComponent);
 		}
 		else
 		{
+			UE_LOG(LogHexGraph, Warning, TEXT("SetupPlayerInputComponent: Using direct binding fallback"));
+			
+			// Log input action status
+			UE_LOG(LogHexGraph, Warning, TEXT("Input Actions - Select: %s, Delete: %s, LineDraw: %s, Rotate: %s"), 
+				ia_Select ? TEXT("valid") : TEXT("null"),
+				ia_Delete ? TEXT("valid") : TEXT("null"),
+				ia_StartLineDraw ? TEXT("valid") : TEXT("null"),
+				ia_Rotate ? TEXT("valid") : TEXT("null"));
+			
 			// Fallback to original direct bindings
 			//Select
-			EnhancedInputComponent->BindAction(ia_Select, ETriggerEvent::Triggered, this, &AHexGraph::OnSelect);
+			if (ia_Select)
+			{
+				EnhancedInputComponent->BindAction(ia_Select, ETriggerEvent::Triggered, this, &AHexGraph::OnSelect);
+				UE_LOG(LogHexGraph, Warning, TEXT("Bound ia_Select"));
+			}
 			
 			//LineDraw
-			EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Started, this, &AHexGraph::OnStartLineDraw);
-			EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Triggered, this, &AHexGraph::PreviewLineDraw);
-			EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Completed, this, &AHexGraph::OnStopLineDraw);
-			EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Canceled, this, &AHexGraph::OnStopLineDraw);
+			if (ia_StartLineDraw)
+			{
+				EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Started, this, &AHexGraph::OnStartLineDraw);
+				EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Triggered, this, &AHexGraph::PreviewLineDraw);
+				EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Completed, this, &AHexGraph::OnStopLineDraw);
+				EnhancedInputComponent->BindAction(ia_StartLineDraw, ETriggerEvent::Canceled, this, &AHexGraph::OnStopLineDraw);
+				UE_LOG(LogHexGraph, Warning, TEXT("Bound ia_StartLineDraw"));
+			}
 
 			//Delete
-			EnhancedInputComponent->BindAction(ia_Delete, ETriggerEvent::Triggered, this, &AHexGraph::OnDelete);
+			if (ia_Delete)
+			{
+				EnhancedInputComponent->BindAction(ia_Delete, ETriggerEvent::Triggered, this, &AHexGraph::OnDelete);
+				UE_LOG(LogHexGraph, Warning, TEXT("Bound ia_Delete"));
+			}
 
 			//Camera Controls
-			EnhancedInputComponent->BindAction(ia_Zoom, ETriggerEvent::Triggered, this, &AHexGraph::OnZoom);
-			EnhancedInputComponent->BindAction(ia_Rotate, ETriggerEvent::Triggered, this, &AHexGraph::OnRotate);
-			EnhancedInputComponent->BindAction(ia_MoveForward, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveForward);
-			EnhancedInputComponent->BindAction(ia_MoveBack, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveBack);
-			EnhancedInputComponent->BindAction(ia_MoveLeft, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveLeft);
-			EnhancedInputComponent->BindAction(ia_MoveRight, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveRight);
+			if (ia_Zoom)
+			{
+				EnhancedInputComponent->BindAction(ia_Zoom, ETriggerEvent::Triggered, this, &AHexGraph::OnZoom);
+				UE_LOG(LogHexGraph, Warning, TEXT("Bound ia_Zoom"));
+			}
+			
+			if (ia_Rotate)
+			{
+				EnhancedInputComponent->BindAction(ia_Rotate, ETriggerEvent::Triggered, this, &AHexGraph::OnRotate);
+				UE_LOG(LogHexGraph, Warning, TEXT("Bound ia_Rotate"));
+			}
+			
+			if (ia_MoveForward)
+			{
+				EnhancedInputComponent->BindAction(ia_MoveForward, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveForward);
+			}
+			
+			if (ia_MoveBack)
+			{
+				EnhancedInputComponent->BindAction(ia_MoveBack, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveBack);
+			}
+			
+			if (ia_MoveLeft)
+			{
+				EnhancedInputComponent->BindAction(ia_MoveLeft, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveLeft);
+			}
+			
+			if (ia_MoveRight)
+			{
+				EnhancedInputComponent->BindAction(ia_MoveRight, ETriggerEvent::Triggered, this, &AHexGraph::OnMoveRight);
+			}
 
 			//Fill
-			EnhancedInputComponent->BindAction(ia_Fill, ETriggerEvent::Started, this, &AHexGraph::OnFill);
+			if (ia_Fill)
+			{
+				EnhancedInputComponent->BindAction(ia_Fill, ETriggerEvent::Started, this, &AHexGraph::OnFill);
+			}
 		}
 	}
 }
@@ -1326,13 +1419,14 @@ void AHexGraph::InitializeManagers()
 	InputHandler = CreateDefaultSubobject<UHexInputHandler>(TEXT("InputHandler"));
 	CameraController = CreateDefaultSubobject<UHexCameraController>(TEXT("CameraController"));
 	DrawingSystem = CreateDefaultSubobject<UHexDrawingSystem>(TEXT("DrawingSystem"));
+	EventManager = CreateDefaultSubobject<UHexGraphEventManager>(TEXT("EventManager"));
 
 	UE_LOG(LogHexGraph, Log, TEXT("HexGraph: Manager instances created"));
 }
 
 void AHexGraph::SetupManagerEventBindings()
 {
-	if (!VertexManager || !InputHandler || !CameraController || !DrawingSystem)
+	if (!VertexManager || !InputHandler || !CameraController || !DrawingSystem || !EventManager)
 	{
 		UE_LOG(LogHexGraph, Error, TEXT("HexGraph::SetupManagerEventBindings: One or more managers are null"));
 		return;
@@ -1343,6 +1437,17 @@ void AHexGraph::SetupManagerEventBindings()
 	InputHandler->Initialize(this);
 	CameraController->Initialize(this, SpringArmComp, CameraComp);
 	DrawingSystem->Initialize(this, VertexManager);
+
+	// Initialize Event Manager and set up event listeners
+	if (EventManager)
+	{
+		// Bind event listeners for debugging and monitoring
+		EventManager->OnVertexEvent.AddDynamic(this, &AHexGraph::OnVertexEventReceived);
+		EventManager->OnGraphEvent.AddDynamic(this, &AHexGraph::OnGraphEventReceived);
+		EventManager->OnInputEvent.AddDynamic(this, &AHexGraph::OnInputEventReceived);
+
+		UE_LOG(LogHexGraph, Log, TEXT("HexGraph: EventManager initialized with debug listeners"));
+	}
 
 	// Bind input events to appropriate handlers
 	if (InputHandler)
@@ -1363,6 +1468,7 @@ void AHexGraph::SetupManagerEventBindings()
 // Manager Event Handler Implementations
 void AHexGraph::HandleSelectInput()
 {
+	UE_LOG(LogHexGraph, Warning, TEXT("HexGraph: HandleSelectInput called"));
 	// Delegate to original OnSelect logic
 	OnSelect();
 }
@@ -1490,5 +1596,104 @@ void AHexGraph::RemoveVertexAtCoord(const FHexCoordinate& Coordinate)
 AVertex* AHexGraph::AddVertexByCoord(TSubclassOf<AVertex> vertexClass, const FHexCoordinate& Coordinate, FTransform spawnTransform, bool isTemp)
 {
 	return AddVertexByCoord(vertexClass, Coordinate.ToString(), spawnTransform, isTemp);
+}
+
+void AHexGraph::TestEventSystem()
+{
+	if (!EventManager)
+	{
+		UE_LOG(LogHexGraph, Error, TEXT("TestEventSystem: EventManager is null"));
+		return;
+	}
+
+	UE_LOG(LogHexGraph, Log, TEXT("=== Testing Event System ==="));
+
+	// Test broadcasting different types of events
+	EventManager->BroadcastEvent(EHexGraphEventType::GraphLoaded, FHexCoordinate(0, 0), nullptr, this, TEXT("Test graph loaded event"));
+	EventManager->BroadcastEvent(EHexGraphEventType::VertexCreated, FHexCoordinate(1, 1), nullptr, this, TEXT("Test vertex created event"));
+	EventManager->BroadcastEvent(EHexGraphEventType::InputModeChanged, FHexCoordinate(), nullptr, this, TEXT("Test input mode changed event"));
+
+	// Log event statistics
+	EventManager->LogEventStatistics();
+
+	UE_LOG(LogHexGraph, Log, TEXT("=== Event System Test Complete ==="));
+}
+
+void AHexGraph::OnVertexEventReceived(const FHexGraphEventData& EventData)
+{
+	UE_LOG(LogHexGraph, Log, TEXT("HexGraph: Received Vertex Event - %s at %s"), 
+		*UEnum::GetValueAsString(EventData.EventType), *EventData.Coordinate.ToString());
+	
+	// Handle specific vertex events for UI updates, statistics, etc.
+	switch (EventData.EventType)
+	{
+	case EHexGraphEventType::VertexCreated:
+		verticesCreated++;
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("Total vertices created: %d"), verticesCreated);
+		break;
+		
+	case EHexGraphEventType::VertexDestroyed:
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("Vertex destroyed, cleanup completed"));
+		break;
+		
+	default:
+		break;
+	}
+}
+
+void AHexGraph::OnGraphEventReceived(const FHexGraphEventData& EventData)
+{
+	UE_LOG(LogHexGraph, Log, TEXT("HexGraph: Received Graph Event - %s"), 
+		*UEnum::GetValueAsString(EventData.EventType));
+	
+	// Handle graph-level events
+	switch (EventData.EventType)
+	{
+	case EHexGraphEventType::GraphCleared:
+		UE_LOG(LogHexGraph, Log, TEXT("Graph cleared - resetting counters"));
+		verticesCreated = 0;
+		break;
+		
+	case EHexGraphEventType::GraphLoaded:
+		UE_LOG(LogHexGraph, Log, TEXT("Graph loaded successfully"));
+		break;
+		
+	case EHexGraphEventType::GraphSaved:
+		UE_LOG(LogHexGraph, Log, TEXT("Graph saved successfully"));
+		break;
+		
+	default:
+		break;
+	}
+}
+
+void AHexGraph::OnInputEventReceived(const FHexGraphEventData& EventData)
+{
+	UE_LOG(LogHexGraph, Log, TEXT("HexGraph: Received Input Event - %s"), 
+		*UEnum::GetValueAsString(EventData.EventType));
+	
+	// Handle input events for UI state updates
+	switch (EventData.EventType)
+	{
+	case EHexGraphEventType::InputModeChanged:
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("Input mode changed, updating UI state"));
+		// Could trigger UI updates here
+		break;
+		
+	case EHexGraphEventType::DrawingStarted:
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("Drawing started, entering drawing mode"));
+		break;
+		
+	case EHexGraphEventType::DrawingFinished:
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("Drawing finished, exiting drawing mode"));
+		break;
+		
+	case EHexGraphEventType::DrawingCancelled:
+		UE_LOG(LogHexGraph, VeryVerbose, TEXT("Drawing cancelled, reverting to normal mode"));
+		break;
+		
+	default:
+		break;
+	}
 }
 

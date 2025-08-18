@@ -6,6 +6,7 @@
 #include "HexGraphValidation.h"
 #include "HexGraphSettings.h"
 #include "HexGraphMap.h"
+#include "HexGraphEventManager.h"
 #include "Engine/World.h"
 
 UHexVertexManager::UHexVertexManager()
@@ -47,7 +48,28 @@ AVertex* UHexVertexManager::CreateVertex(TSubclassOf<AVertex> VertexClass, const
 	}
 
 	// Check if vertex already exists at this coordinate
-	if (GetVertex(Coordinate, true))
+	// For temporary vertices, only block if another temporary vertex exists
+	// For permanent vertices, block if any vertex exists
+	bool bShouldBlock = false;
+	if (bIsTemporary)
+	{
+		// For temporary vertices, only check temporary vertices
+		AVertex* ExistingTempVertex = GetVertex(Coordinate, false); // Check only temporary
+		if (ExistingTempVertex && ExistingTempVertex->type == EVertexType::Preview)
+		{
+			bShouldBlock = true;
+		}
+	}
+	else
+	{
+		// For permanent vertices, check all vertices
+		if (GetVertex(Coordinate, true))
+		{
+			bShouldBlock = true;
+		}
+	}
+	
+	if (bShouldBlock)
 	{
 		UE_LOG(LogHexGraph, Warning, TEXT("HexVertexManager::CreateVertex: Vertex already exists at %s"), *Coordinate.ToString());
 		return nullptr;
@@ -65,6 +87,18 @@ AVertex* UHexVertexManager::CreateVertex(TSubclassOf<AVertex> VertexClass, const
 
 	// Initialize the vertex
 	InitializeVertexInternal(NewVertex, Coordinate, bIsTemporary);
+
+	// Broadcast vertex creation event
+	if (OwningHexGraph.Get() && OwningHexGraph->EventManager)
+	{
+		OwningHexGraph->EventManager->BroadcastEvent(
+			EHexGraphEventType::VertexCreated, 
+			Coordinate, 
+			NewVertex, 
+			OwningHexGraph.Get(), 
+			bIsTemporary ? TEXT("Temporary vertex created") : TEXT("Permanent vertex created")
+		);
+	}
 
 	UE_LOG(LogHexGraph, VeryVerbose, TEXT("HexVertexManager::CreateVertex: Created %s vertex at %s"), 
 		   bIsTemporary ? TEXT("temporary") : TEXT("permanent"), *Coordinate.ToString());
@@ -203,6 +237,18 @@ bool UHexVertexManager::RemoveVertex(const FHexCoordinate& Coordinate, bool bFor
 		// This would need to be implemented based on the adjacency system
 	}
 
+	// Broadcast vertex destruction event before destroying
+	if (OwningHexGraph.Get() && OwningHexGraph->EventManager)
+	{
+		OwningHexGraph->EventManager->BroadcastEvent(
+			EHexGraphEventType::VertexDestroyed, 
+			Coordinate, 
+			VertexToRemove, 
+			OwningHexGraph.Get(), 
+			FString::Printf(TEXT("Vertex removed at %s"), *CoordString)
+		);
+	}
+
 	// Destroy the vertex
 	VertexToRemove->Destroy();
 
@@ -244,8 +290,84 @@ AGraphVertex* UHexVertexManager::PromoteToGraphVertex(APlaceHolderVertex* Placeh
 	// Initialize and add to maps
 	InitializeVertexInternal(NewGraphVertex, Coordinate, false, ExistingAdjacencyMap);
 	
+	// Store adjacency information before destroying placeholder
+	TArray<FString> neighbors;
+	if (ExistingAdjacencyMap)
+	{
+		neighbors = ExistingAdjacencyMap->adjacentVertexCoords;
+	}
+	else
+	{
+		neighbors = { "", "", "", "", "", "" }; // Empty adjacencies
+	}
+	
 	// Destroy the placeholder
 	PlaceholderVertex->Destroy();
+
+	// Build new placeholders in all empty neighbor coordinates (original behavior)
+	for (int i = 0; i < neighbors.Num(); i++)
+	{
+		if (neighbors[i] == "") 
+		{
+			EHexagonDirection Direction = static_cast<EHexagonDirection>(i);
+			AVertex* newPlaceHolder = CreateVertexInDirection(
+				OwningHexGraph->placeHolderVertexClass, 
+				NewGraphVertex, 
+				Direction, 
+				false
+			);
+
+			if (newPlaceHolder)
+			{
+				//Check all directions for adjacencies
+				TArray<FString> placeHolderAdjacencies = { "", "", "", "", "", "" };
+				for (int j = 0; j < 6; j++)
+				{
+					FHexCoordinate NeighborCoord = FHexCoordinateUtils::GetCoordinateInDirection(
+						FHexCoordinate::FromString(newPlaceHolder->Coord()), 
+						static_cast<EHexagonDirection>(j)
+					);
+					FString coord = NeighborCoord.ToString();
+
+					//Ensure bidirectional adjacency with all other vertices
+					if (AVertex* ExistingVertex = GetVertex(NeighborCoord, false))
+					{
+						placeHolderAdjacencies[j] = coord;
+						
+						// Set bidirectional adjacency
+						TMap<FString, TObjectPtr<UAdjacencyMap>>& PermanentAdjMap = GetAdjacencyMap(false);
+						if (TObjectPtr<UAdjacencyMap>* ExistingAdjMapPtr = PermanentAdjMap.Find(coord))
+						{
+							if (ExistingAdjMapPtr->Get())
+							{
+								ExistingAdjMapPtr->Get()->setDirectionsAdjacency((j + 3) % 6, newPlaceHolder->Coord());
+							}
+						}
+					}
+				}
+				
+				// Set adjacencies for the new placeholder
+				TMap<FString, TObjectPtr<UAdjacencyMap>>& PlaceholderAdjMap = GetAdjacencyMap(false);
+				if (TObjectPtr<UAdjacencyMap>* NewPlaceHolderAdjMapPtr = PlaceholderAdjMap.Find(newPlaceHolder->Coord()))
+				{
+					if (NewPlaceHolderAdjMapPtr->Get())
+					{
+						NewPlaceHolderAdjMapPtr->Get()->setAllAdjacencies(placeHolderAdjacencies);
+					}
+				}
+				
+				// Set the promoted vertex's adjacency to the new placeholder
+				TMap<FString, TObjectPtr<UAdjacencyMap>>& PromotedAdjMap = GetAdjacencyMap(false);
+				if (TObjectPtr<UAdjacencyMap>* PromotedVertexAdjMapPtr = PromotedAdjMap.Find(CoordString))
+				{
+					if (PromotedVertexAdjMapPtr->Get())
+					{
+						PromotedVertexAdjMapPtr->Get()->setDirectionsAdjacency(i, newPlaceHolder->Coord());
+					}
+				}
+			}
+		}
+	}
 
 	UE_LOG(LogHexGraph, Log, TEXT("HexVertexManager::PromoteToGraphVertex: Promoted vertex at %s"), *CoordString);
 	return NewGraphVertex;
